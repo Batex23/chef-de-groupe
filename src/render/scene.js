@@ -654,7 +654,7 @@ function buildFx() {
   for (let i = 0; i < N; i++) P.alpha[i] = 0;
   // flammes : 7 jeux de sprites (une par fenetre) + le canape
   const fm = () => new T.SpriteMaterial({ map: TEX.flame, blending: T.AdditiveBlending, depthWrite: false, transparent: true, color: '#ffb47a', opacity: 0.85 });
-  for (const id of Object.keys(winR3).concat(['SOFA'])) {
+  for (const id of Object.keys(winR3).concat(['SOFA', 'R4W'])) {
     const grp = new T.Group(); scene.add(grp); const arr = [];
     for (let k = 0; k < 4; k++) { const s = new T.Sprite(fm()); grp.add(s); arr.push(s); }
     const halo = new T.Sprite(new T.SpriteMaterial({ map: TEX.glow, color: '#ff7a2a', blending: T.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.5 })); grp.add(halo);
@@ -768,6 +768,16 @@ S3.update = function (dtReal, now) {
       fl.halo.position.set((w[1] + w[2]) / 2, R3 + w[4] + 0.1, front ? 0.45 : -9.05); const hs = 4 + 3 * k; fl.halo.scale.set(hs, hs, 1);
       fl.halo.material.opacity = 0.35 + 0.15 * Math.sin(now / 80);
     }
+  }
+  // propagation au R+4 par la facade (fenetre au-dessus du sejour)
+  const r4 = G.r4 || {}, r4f = flames.find(f => f.id === 'R4W'), r4On = r4.t0 != null && !r4.out && r4.q > 80;
+  r4f.grp.visible = r4On;
+  if (r4On) {
+    const k = clamp(r4.q / 2500, 0.3, 1), y0 = 4 * LV + 2.2;
+    r4f.arr.forEach((sp, j) => { const hh = (0.5 + 0.9 * k) * (0.7 + 0.3 * Math.sin(now / 65 + j * 1.7)); sp.position.set(1.0 + (j + 0.5) * 0.35, y0 + hh * 0.3 - 0.25, 0.3); sp.scale.set(0.45 + 0.2 * k, hh, 1); });
+    r4f.halo.position.set(1.7, y0 + 0.1, 0.45); r4f.halo.scale.set(4 + 3 * k, 4 + 3 * k, 1); r4f.halo.material.opacity = 0.35 + 0.15 * Math.sin(now / 80);
+    const n = clamp(r4.q / 120, 3, 25) * dtReal * (quality === 'standard' ? 1 : 0.45);
+    for (let k2 = 0; k2 < Math.floor(n + Math.random()); k2++) emit(1.0 + Math.random() * 1.4, y0 - 0.2, 0.1, (Math.random() - 0.5) * 0.4, 1.0 + Math.random() * 0.8, 0.8 + Math.random(), 1.0 + Math.random() * 0.6, 0.07, 10);
   }
   // feu interieur (canape / piece) visible en coupe
   const sofa = flames.find(f => f.id === 'SOFA');

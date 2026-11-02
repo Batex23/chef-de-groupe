@@ -25,6 +25,8 @@ BASE = dict(
     t_exutoire=NEVER,        # pas de desenfumage
     tmp_bris_vitre=400.0,    # critere simplifie de bris des vitrages (degC gaz)
     t_attaque=None,          # pas d'extinction
+    t_vpp=None,              # pas de ventilation operationnelle
+    vpp_vel=10.0,            # m/s au soufflage du ventilateur (face 0,8 x 0,8 m => 6,4 m3/s souffles)
 )
 SCENARIOS = {
     "R0_BASE": dict(),
@@ -33,6 +35,10 @@ SCENARIOS = {
     "R3_SOUS_VENTILE": dict(tmp_bris_vitre=NEVER),
     "R4_ATTAQUE": dict(t_attaque=660.0),
     "R5_CHAMBRE1_OUVERTE": dict(t_porte_ch1=0.0),
+    # Ventilation operationnelle (VPP thermique devant la porte d'immeuble)
+    "R6_VPP_APRES_ATTAQUE": dict(t_porte_paliere=90.0, t_attaque=660.0, t_exutoire=720.0, t_vpp=840.0),
+    "R7_VPP_ATTAQUE": dict(t_porte_paliere=90.0, t_attaque=720.0, t_exutoire=640.0, t_vpp=660.0),
+    "R8_VPP_SANS_EXUTOIRE": dict(t_porte_paliere=90.0, t_attaque=660.0, t_vpp=840.0),
 }
 
 # --------------------------------------------------------------------------
@@ -129,12 +135,16 @@ def build(name, sc):
         w("&MESH ID='EXT_O', IJK=29,10,26, XB=0.0,5.8,-2.0,0.0,0.0,5.2 /")
         w("&MESH ID='EXT_E', IJK=26,10,26, XB=5.8,11.0,-2.0,0.0,0.0,5.2 /")
         w("&MESH ID='CAGE', IJK=15,18,66, XB=-3.0,0.0,5.0,8.6,-7.8,5.4 /")
+        if p["t_vpp"] is not None:
+            w("&MESH ID='PARVIS', IJK=15,13,14, XB=-3.0,0.0,8.6,11.2,-7.8,-5.0 / ! devant la porte d'immeuble (VPP) => 6 processus MPI")
     else:
         w("! MAILLAGES (cellules 0,2 m) - 3 maillages => lancer avec 3 processus MPI")
         w("! =====================================================================")
         w("&MESH ID='APPART', IJK=55,43,13, XB=0.0,11.0,0.0,8.6,0.0,2.6 /")
         w("&MESH ID='EXTERIEUR', IJK=55,10,26, XB=0.0,11.0,-2.0,0.0,0.0,5.2 /")
         w("&MESH ID='CAGE', IJK=15,18,66, XB=-3.0,0.0,5.0,8.6,-7.8,5.4 /")
+        if p["t_vpp"] is not None:
+            w("&MESH ID='PARVIS', IJK=15,13,14, XB=-3.0,0.0,8.6,11.2,-7.8,-5.0 / ! devant la porte d'immeuble (VPP) => 4 processus MPI")
     w("")
     w(f"&TIME T_END={T_END:.1f} /")
     w("&DUMP DT_DEVC=2.0, DT_HRR=2.0, DT_SLCF=10.0, DT_BNDF=30.0 /" if RAPIDE else "&DUMP DT_DEVC=1.0, DT_HRR=1.0, DT_SLCF=5.0, DT_BNDF=10.0 /")
@@ -248,7 +258,32 @@ def build(name, sc):
         w(f"&OBST ID='MUR_ENTREE', XB={xb(*bx)}, SURF_ID='BETON' /")
     timer("OUV_PORTE_IMMEUBLE", p["t_porte_immeuble"], "-1.40,8.20,-6.80", "porte d'immeuble RDC")
     w(f"&OBST ID='PORTE_IMMEUBLE', XB={xb(a, b, 8.4, 8.6, za, zb)}, SURF_ID='PORTE', DEVC_ID='OUV_PORTE_IMMEUBLE' /")
-    w(f"&VENT ID='ENTREE_OUVERTE', XB={xb(a, b, 8.6, 8.6, za, zb)}, SURF_ID='OPEN' /")
+    if p["t_vpp"] is None:
+        w(f"&VENT ID='ENTREE_OUVERTE', XB={xb(a, b, 8.6, 8.6, za, zb)}, SURF_ID='OPEN' /")
+    else:
+        tv = p["t_vpp"]
+        w("")
+        w("! ---------------------------------------------------------------------")
+        w(f"! VENTILATION OPERATIONNELLE : VPP pose a 2 m de la porte d'immeuble, demarre a t={tv:.0f} s.")
+        w("! Ventilateur represente par un caisson de 0,8 x 0,8 m dont la face cote porte souffle")
+        w(f"! a {p['vpp_vel']:.0f} m/s (VEL negatif = injection). L'entrainement d'air autour du cone")
+        w("! est calcule par FDS dans le maillage PARVIS, ouvert sur l'exterieur.")
+        w("! Limite : la puissance du foyer est imposee, l'effet de l'apport d'air sur la combustion")
+        w("! (ventilation offensive) n'est donc pas predit ; seul le transport des fumees l'est.")
+        w("! ---------------------------------------------------------------------")
+        w(f"&SURF ID='VPP', VEL={-p['vpp_vel']:.1f}, RAMP_V='VPP', COLOR='YELLOW' /")
+        w(f"&RAMP ID='VPP', T=0.0, F=0.0 /")
+        w(f"&RAMP ID='VPP', T={tv:.1f}, F=0.0 /")
+        w(f"&RAMP ID='VPP', T={tv + 5:.1f}, F=1.0 /")
+        w(f"&RAMP ID='VPP', T={T_END:.1f}, F=1.0 /")
+        cx = (a + b) / 2
+        w(f"&OBST ID='VPP', XB={xb(cx - 0.4, cx + 0.4, 10.6, 10.8, -7.6, -6.8)}, SURF_IDS='INERT','INERT','INERT' /")
+        w(f"&VENT ID='VPP_SOUFFLAGE', XB={xb(cx - 0.4, cx + 0.4, 10.6, 10.6, -7.6, -6.8)}, SURF_ID='VPP' /")
+        for v in [(-3.0, 0.0, 11.2, 11.2, -7.8, -5.0), (-3.0, -3.0, 8.6, 11.2, -7.8, -5.0), (0.0, 0.0, 8.6, 11.2, -7.8, -5.0),
+                  (-3.0, 0.0, 8.6, 11.2, -5.0, -5.0)]:
+            w(f"&VENT XB={xb(*v)}, SURF_ID='OPEN' /")
+        # facade (mur) au-dessus et de part et d'autre de la porte : deja donne par MUR_ENTREE en y=8.4-8.6
+        w(f"&DEVC ID='VPP_DEBIT_SOUFFLE', QUANTITY='VOLUME FLOW', XB={xb(cx - 0.6, cx + 0.6, 10.4, 10.4, -7.8, -6.6)} /")
     w("")
 
     # ---- mesures

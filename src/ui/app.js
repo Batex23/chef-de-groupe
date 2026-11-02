@@ -542,8 +542,8 @@ function goHome() {
   S3.autoRotate(true); S3.view('aerien');
 }
 function startGame() {
-  GM.newGame(); G.started = true; G.speed = 0.5; resetUI();
-  document.querySelectorAll('.spd').forEach(x => x.setAttribute('aria-pressed', x.dataset.s === '0.5'));
+  GM.newGame(); G.started = true; G.speed = 0.25; resetUI();
+  document.querySelectorAll('.spd').forEach(x => x.setAttribute('aria-pressed', x.dataset.s === '0.25'));
   $('#oi-obj').innerHTML = ''; $('#form-oi').reset();
   mode = 'game'; document.body.classList.remove('home');
   $('#intro').hidden = true; S3.autoRotate(false); S3.view('rue');

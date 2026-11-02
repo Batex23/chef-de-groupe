@@ -14,7 +14,11 @@ Le jeu tourne entièrement dans le navigateur : rien à installer, ce qui permet
 - Intervention découpée en phases selon l'algorithme du GOC : arrivée et réactions immédiates, raisonnement tactique, conduite.
 - Raisonnement tactique guidé (SAOIECL). L'ordre initial distribue les missions aux engins, puis il est corrigé et comparé à un ordre type.
 - SITAC dessinée par le joueur avec les symboles conventionnels (feu, fumées, victimes, dangers, attaque, sauvetage, reconnaissance, établissements, moyens), superposée aux renseignements et évaluée au débriefing.
-- Rythme lent par défaut (temps ralenti de moitié) pour laisser le temps du raisonnement. Rythme réel ou rapide au choix.
+- Rythme très lent par défaut (temps divisé par 4) pour laisser le temps du raisonnement. Lent, réel ou rapide au choix, par exemple pendant les attentes.
+- L'intervention ne s'arrête pas quand les flammes tombent. Après l'attaque, il reste des foyers résiduels sous les débris : sans déblai, ils reprennent quelques minutes plus tard. Le feu passe par les états réglementaires : circonscrit, maîtrisé (flammes abattues), éteint (déblai fait et contrôle à la caméra thermique sans point chaud).
+- Propagation par la façade : si les flammes sortent trop longtemps par les fenêtres du séjour, le feu gagne l'appartement du R+4. L'échelle peut protéger la façade avec une lance.
+- Ventilation opérationnelle : VPP devant la porte d'immeuble, efficace seulement avec un exutoire ouvert. Une ventilation lancée sur un feu non attaqué est sanctionnée.
+- Durée réaliste des actions : capelage ARI, établissement dans l'escalier, recherche pièce par pièce, changement de bouteille. Les binômes s'épuisent, la relève se prépare.
 - Ordres de conduite par clic sur les engins et les binômes, témoins qui arrivent au fil de l'intervention, message d'ambiance chronométré (5 min) et corrigé, débriefing.
 
 ## Lancer en local

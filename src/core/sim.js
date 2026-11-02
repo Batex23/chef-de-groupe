@@ -22,7 +22,12 @@ const CFG = {
   igniteK: 873,       // 600 degC -> inflammation d'une piece voisine [CAL]
   roomHRRperM2: 250,  // kW/m2 puissance d'une piece embrasee (limitee ensuite par l'air)
   waterEff: 0.35,     // part de l'eau qui vaporise utilement [CAL]
-  knockCoef: 0.006,   // vitesse d'abattement des flammes par l'eau [CAL]
+  knockCoef: 0.0035,  // vitesse d'abattement des flammes par l'eau [CAL]
+  smoulderKW: 30,     // foyer residuel (braises sous les debris) apres abattement [CAL]
+  repriseMin: 360,    // delai mini de reprise d'un foyer residuel non deblaye (s) [CAL]
+  repriseVar: 300,    // dispersion du delai de reprise (s) [CAL]
+  vppCage: 3.0,       // kg/s extraits de la cage par le VPP (porte d'immeuble ouverte + exutoire) [CAL]
+  vppApt: 1.6,        // kg/s extraits du logement (porte paliere + fenetre ouvertes) [CAL]
 };
 const RHO = T => 353 / T;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -74,7 +79,7 @@ function createWorld() {
     // canape du sejour : t2 rapide, pic 3 MW, ~ 500 MJ
     { zone: 'SEJ', t0: 0, alpha: 0.047, peak: 3000, energy: 1200, burned: 0, k: 1, base: 0.4, out: false, kind: 'canape' },
   ];
-  return { t: 0, Z, O, fires, events: [], log: [], flags: {}, water: {}, ext: {} };
+  return { t: 0, Z, O, fires, smoulder: [], vpp: false, events: [], log: [], flags: {}, water: {}, ext: {} };
 }
 
 // interface de couche (altitude absolue)
@@ -222,6 +227,38 @@ function step(W) {
     if (f.energy - f.burned <= 0) f.out = true;
   }
 
+  // ---- 2b. foyers residuels (braises, debris) : chaleur faible, CO et suies
+  for (const sm of W.smoulder) {
+    if (sm.done) continue;
+    const z = Z[sm.zone], a = acc[z.id], q = CFG.smoulderKW * (0.6 + 0.4 * Math.sin(W.t / 23 + sm.seed * 6));
+    const mf = q / CFG.dHc;
+    a.mIn += mf * 4; a.eIn += q * 0.7 + mf * 3 * CFG.cp * z.Tu;
+    a.CO += mf * 0.35; a.So += mf * 0.12;
+    if ((W.water[sm.zone] || 0) > 0) sm.lastWater = W.t;     // l'arrosage retarde la reprise sans la supprimer
+    const O2ok = z.YO2L > 0.17;
+    if (O2ok && W.t - sm.lastWater > sm.delay && sm.mj > 40) {
+      sm.done = true; sm.reprise = true;
+      W.fires.push({ zone: sm.zone, t0: W.t, alpha: 0.02, peak: Math.min(1800, 110 * z.A), energy: sm.mj, burned: 0, k: 1, base: 0.3, out: false, kind: 'reprise' });
+      W.events.push({ t: W.t, type: 'reprise', id: sm.zone });
+    }
+  }
+  // ---- 2c. ventilation operationnelle (VPP) : extraction de la couche chaude
+  if (W.vpp) {
+    const imm = W.O.find(o => o.id === 'IMMEUBLE'), exu = W.O.find(o => o.id === 'EXUTOIRE'), pal = W.O.find(o => o.id === 'PALIERE');
+    if (imm.open && exu.open) purge(Z.CAGE, CFG.vppCage);
+    const winOpen = W.O.some(o => o.b === 'EXT' && o.glass && o.open && !o.rear) || W.O.some(o => o.b === 'EXT' && o.glass && o.open && o.rear);
+    if (imm.open && pal.open && winOpen) {
+      const rooms = ['COU', ...W.O.filter(o => o.b === 'COU' && o.open && Z[o.a]).map(o => o.a)];
+      for (const r of rooms) purge(Z[r], CFG.vppApt / rooms.length * 2);
+    }
+  }
+  function purge(z, m) {
+    const k = clamp(m * dt / Math.max(z.Mu, 1e-6), 0, 0.2);
+    z.Mu *= 1 - k; z.MO2 *= 1 - k; z.MCO *= 1 - k; z.MSoot *= 1 - k; z.MFuel *= 1 - k;
+    z.Tu += (Ta - z.Tu) * Math.min(0.2, 0.004 * dt * m);
+    z.YO2L += (0.232 - z.YO2L) * Math.min(1, 0.05 * dt);
+  }
+
   // ---- 3. bilan par zone
   for (const id in Z) {
     const z = Z[id], a = acc[id];
@@ -293,7 +330,18 @@ function step(W) {
     if (wq > 0 && !f.out) {
       const Qref = Math.max(500, fireHRRpotential({ ...f, k: 1 }, W.t));
       f.k = Math.max(0, f.k - dt * CFG.knockCoef * wq / Qref);
-      if (f.k < 0.03) { f.out = true; W.events.push({ t: W.t, type: 'eteint', id: f.zone }); }
+      if (f.k < 0.03) {
+        f.out = true; W.events.push({ t: W.t, type: 'eteint', id: f.zone });
+        // les flammes sont abattues mais il reste du combustible en braises : foyer residuel a deblayer
+        const rem = f.energy - f.burned;
+        if (rem > 30) {
+          const prev = W.smoulder.find(x => x.zone === f.zone && !x.done);
+          const seed = ((f.zone.charCodeAt(0) * 7 + f.zone.charCodeAt(1) * 13 + W.smoulder.length * 5) % 17) / 17;
+          const cap = 15 * Z[f.zone].A;   // braises et debris : quelques dizaines de MJ par m2 au plus
+          if (prev) prev.mj = Math.min(cap, prev.mj + rem * 0.6);
+          else W.smoulder.push({ zone: f.zone, mj: Math.min(cap, rem * 0.6), t: W.t, lastWater: W.t, delay: CFG.repriseMin + seed * CFG.repriseVar, seed, done: false });
+        }
+      }
     }
   }
   W.t += dt;
@@ -308,6 +356,7 @@ function thomasQ(W, z) {
   }
   return 7.8 * AT + 378 * s;
 }
+function hasResidual(W, zid) { return W.smoulder.some(s => !s.done && (!zid || s.zone === zid)); }
 function hasFire(W, zid) { return W.fires.some(f => f.zone === zid && !f.out); }
 function roomOnFire(W, zid) { return W.fires.some(f => f.zone === zid && !f.out && (f.lastQ || 0) > 50); }
 
@@ -323,6 +372,6 @@ function fedRate(c) {
   return r;
 }
 
-const SIM = { thomasQ, CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, visibilityU, fedRate, hasFire, roomOnFire, clamp };
+const SIM = { thomasQ, CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, visibilityU, fedRate, hasFire, hasResidual, roomOnFire, clamp };
 if (typeof module !== "undefined") module.exports = SIM;
 if (typeof window !== "undefined") window.SIM = SIM;

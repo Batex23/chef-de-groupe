@@ -3,11 +3,11 @@
 // ===========================================================================
 (function () {
 'use strict';
-const { CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, fedRate, roomOnFire, hasFire, clamp } = SIM;
+const { CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, fedRate, roomOnFire, hasFire, hasResidual, clamp } = SIM;
 
 const T_ECLOSION_CLOCK = 19 * 3600 + 31 * 60; // 19h31
 const T_ARRIVEE = 660;                          // arrivee du CDG (s depuis l'eclosion)
-const T_FIN_MAX = T_ARRIVEE + 40 * 60;
+const T_FIN_MAX = T_ARRIVEE + 75 * 60;
 const ROOMS = ['COU', 'SEJ', 'CUI', 'CH1', 'CH2', 'SDB', 'CH3'];
 const ROOM_NAMES = { SEJ: 'Séjour', CUI: 'Cuisine', CH1: 'Chambre 1', COU: 'Couloir', CH2: 'Chambre 2', SDB: 'Salle de bains', CH3: 'Chambre 3' };
 const LEVELS = ['RDC', 'R1', 'R2', 'R3', 'R4'];
@@ -49,6 +49,7 @@ function newGame() {
     asked: {}, actors: [], victims: [], timers: [], dirty: true, lastUI: 0, codisRelance: false,
     busy: null, observations: [], fire: { cur: 'developpement', cand: null, candT: 0, hist: [], lastEvt: 0, log: [] },
     phase: 'arrivee', oi: null, sitacUser: [],
+    r4: { exp: 0, t0: null, k: 1, q: 0, out: false, residual: 0, deblaye: false, warned: false }, controle: null, reprises: 0,
     witnesses: WITNESSES.map(w => ({ id: w.id, present: false, appearT: w.appear, arrivedT: null })),
   });
   for (const w of G.witnesses) G.timers.push({ t: w.appearT, fn: () => { w.present = true; w.arrivedT = G.W.t; G.dirty = true;
@@ -194,10 +195,15 @@ const MISSIONS = {
   R4: { label: 'Reconnaissance du R+4 et mise en sécurité des occupants', who: ['binome'] },
   EXUTOIRE: { label: "Ouvrir l'exutoire en tête de cage", who: ['binome'] },
   ALIM: { label: 'Alimenter le FPT sur le PI (80 m)', who: ['binome'] },
+  ATTAQUE_R4: { label: 'Attaque du feu au R+4 (LDV par la cage)', who: ['binome'] },
+  DEBLAI: { label: 'Déblai et dégarnissage des pièces sinistrées (noyage des foyers résiduels)', who: ['binome'] },
+  CONTROLE: { label: 'Contrôle à la caméra thermique (points chauds)', who: ['binome'] },
+  VPP: { label: 'Ventilation opérationnelle : VPP à la porte d\'immeuble', who: ['binome'] },
   REPLI: { label: 'Repli au pied de l\'immeuble', who: ['binome'] },
   PA_R4: { label: 'Mise en station, sauvetage du voisin du R+4 par la façade', who: ['echelle'] },
   PA_CH1: { label: 'Mise en station, sauvetage par la fenêtre de la chambre 1 (R+3)', who: ['echelle'] },
   PA_RECO: { label: 'Reconnaissance de la façade', who: ['echelle'] },
+  PA_PROTEC: { label: 'Lance sur échelle en protection de la façade (R+4)', who: ['echelle'] },
   PEC: { label: 'Prise en charge des victimes au pied de l\'immeuble', who: ['vsav'] },
 };
 function availableMissions(a) {
@@ -209,6 +215,10 @@ function availableMissions(a) {
     if (k === 'EXUTOIRE' && isOpen('EXUTOIRE')) continue;
     if (k === 'PA_CH1' && !(G.K.facts.victime_lieu)) continue;
     if (k === 'PEC' && a.pec) continue;
+    if (k === 'ATTAQUE_R4' && !(G.r4.t0 != null && !G.r4.out)) continue;
+    if (k === 'DEBLAI' && !(G.W.smoulder.length || G.W.fires.some(f => f.out) || G.r4.out)) continue;
+    if (k === 'CONTROLE' && !G.W.fires.some(f => f.out)) continue;
+    if (k === 'VPP' && (G.W.vpp || G.vppPlanned)) continue;
     list.push(k);
   }
   return list;
@@ -233,6 +243,9 @@ function order(a, key, opts) {
 function planBinome(a, key, o) {
   const P = a.plan;
   const toR3 = () => { P.push({ type: 'move', to: 'CAGE_R3', hose: true }); };
+  a.effort = 1;
+  if (['ATTAQUE', 'RECHERCHE', 'PALIERE', 'R4', 'EXUTOIRE', 'DEBLAI', 'CONTROLE', 'ATTAQUE_R4'].includes(key) && !a.ari && a.loc === 'RUE')
+    P.push({ type: 'act', d: 45, label: 'Capelage ARI, contrôle de pression et engagement', fn: () => { a.ari = true; } });
   if (key === 'ATTAQUE') {
     a.lance = o.lance || 'LDV 500';
     a.status = `Établissement ${a.lance} par la cage`;
@@ -250,7 +263,20 @@ function planBinome(a, key, o) {
   } else if (key === 'EXUTOIRE') {
     P.push({ type: 'move', to: 'TOIT' }); P.push({ type: 'act', d: 15, label: "Ouverture de l'exutoire", fn: () => { setOpen('EXUTOIRE', true); report(a, `Exutoire ouvert en tête de cage.${isOpen('IMMEUBLE') ? '' : " La porte d'immeuble est fermée : peu d'amenée d'air."}`); } });
   } else if (key === 'ALIM') {
-    P.push({ type: 'act', d: 160, label: 'Établissement sur le PI', fn: () => { G.alim = true; report(a, 'FPT alimenté sur le PI.'); } });
+    P.push({ type: 'act', d: 210, label: 'Établissement sur le PI', fn: () => { G.alim = true; report(a, 'FPT alimenté sur le PI.'); } });
+  } else if (key === 'DEBLAI') {
+    a.lance = a.lance || 'LDV 250';
+    toR3(); P.push({ type: 'deblai' });
+  } else if (key === 'CONTROLE') {
+    P.push({ type: 'move', to: 'CAGE_R3' }); P.push({ type: 'controle' });
+  } else if (key === 'ATTAQUE_R4') {
+    a.lance = o.lance || 'LDV 500';
+    a.status = `Établissement ${a.lance} au R+4`;
+    P.push({ type: 'move', to: 'CAGE_R4', hose: true }); P.push({ type: 'move', to: 'R4_APT' }); P.push({ type: 'attackR4' });
+  } else if (key === 'VPP') {
+    G.vppPlanned = true;
+    P.push({ type: 'move', to: 'RUE' });
+    P.push({ type: 'act', d: 150, label: 'Mise en place du VPP devant la porte d\'immeuble', fn: () => startVPP(a) });
   } else if (key === 'REPLI') {
     P.push({ type: 'move', to: 'RUE' }); P.push({ type: 'act', d: 1, label: '', fn: () => report(a, 'Binôme au pied de l\'immeuble.') });
   }
@@ -271,6 +297,7 @@ function planPA(a, key) {
     else report(a, 'Fenêtre de la chambre 1 ouverte, pas de victime.');
     G.K.rooms.CH1 = snapshotRoom('CH1');
   } });
+  if (key === 'PA_PROTEC') P.push({ type: 'act', d: 90, label: 'Établissement de la lance sur l\'échelle', fn: () => { a.protec = true; report(a, 'Lance en manœuvre sur l\'échelle, protection de la façade au droit du R+4.'); } });
   if (key === 'PA_RECO') P.push({ type: 'act', d: 60, label: 'Reconnaissance façade', fn: () => {
     know('feu_sejour', 'Feu localisé au séjour (côté rue)'); know('voisin_r4', 'Voisin du R+4 à sa fenêtre');
     const b = G.W.O.filter(o => o.glass && o.broken).length;
@@ -300,7 +327,9 @@ function snapshotRoom(r) {
   const T = z.Tu - 273;
   let heat = T > 400 ? 'chaleur extrême' : T > 200 ? 'forte chaleur' : T > 80 ? 'chaleur sensible' : 'pas de chaleur notable';
   const onFire = roomOnFire(G.W, r);
-  const fire = onFire ? (z.flashed ? 'embrasement généralisé' : 'feu en cours') : (G.W.fires.some(f => f.zone === r) ? 'feu éteint' : '');
+  const resid = hasResidual(G.W, r);
+  const rep = G.W.fires.some(f => f.zone === r && !f.out && f.kind === 'reprise');
+  const fire = onFire ? (rep ? 'reprise de feu sous les débris' : z.flashed ? 'embrasement généralisé' : 'feu en cours') : resid ? 'flammes abattues, foyers résiduels sous les débris' : (G.W.fires.some(f => f.zone === r) ? 'feu éteint, déblayé' : '');
   const v = G.victims.find(v => v.loc === r && !v.atRue && !v.carried);
   return { t: G.W.t, smoke, heat, fire, onFire, T, zr, sev: onFire ? 3 : T > 200 ? 2 : zr < 1.2 ? 1.5 : zr < 2.3 ? 1 : 0, victim: v ? v.id : null };
 }
@@ -322,11 +351,14 @@ function tickActor(a, dt) {
   const zo = zoneOf(a.loc);
   // air (ARI) et exposition
   if (a.kind === 'binome') {
-    if (zo || a.loc === 'TOIT' || a.loc === 'R4_APT') a.air -= dt * (a.carry ? 1.6 : 1);
+    if (zo || a.loc === 'TOIT' || a.loc === 'R4_APT') a.air -= dt * (a.carry ? 1.6 : (a.effort || 1));
+    if (a.loc === 'R4_APT') exposureR4(a, dt);
     if (zo) exposure(a, dt, zo);
     if (a.air <= 300 && !a.lowAir && a.loc !== 'RUE') {
       a.lowAir = true; report(a, 'Sifflet de fin de bouteille, je me replie.');
-      a.plan = [{ type: 'move', to: 'RUE' }, { type: 'act', d: 120, label: 'Changement de bouteille', fn: () => { a.air = 1500; a.lowAir = false; report(a, 'Binôme reconditionné, disponible.'); } }, { type: 'done' }];
+      a.plan = [{ type: 'move', to: 'RUE' }, { type: 'act', d: 300, label: 'Changement de bouteille et réhydratation', fn: () => { a.air = 1500; a.lowAir = false; report(a, 'Binôme reconditionné, disponible.'); } }, { type: 'done' }];
+      if (a.mission === 'ATTAQUE' || a.mission === 'DEBLAI' || a.mission === 'ATTAQUE_R4') G.journal.push({ t: G.W.t, text: `${a.label} (${a.engin}) en fin de bouteille : sa mission « ${MISSIONS[a.mission].label.toLowerCase()} » est interrompue, relève à organiser.` });
+      a.mission = null; a.established = false;
       a.flowing = false; G.dirty = true;
     }
   }
@@ -342,10 +374,13 @@ function tickActor(a, dt) {
   }
   if (s.type === 'search') return doSearch(a, s, dt);
   if (s.type === 'attack') return doAttack(a, s, dt);
+  if (s.type === 'deblai') return doDeblai(a, s, dt);
+  if (s.type === 'controle') return doControle(a, s, dt);
+  if (s.type === 'attackR4') return doAttackR4(a, s, dt);
   if (s.type === 'carry') return doCarry(a, s);
   if (s.type === 'drop') return doDrop(a, s);
   if (s.type === 'done') {
-    a.plan.shift(); a.mission = null; a.flowing = false;
+    a.plan.shift(); a.mission = null; a.flowing = false; a.effort = 1;
     a.status = a.loc === 'RUE' ? 'Disponible au pied de l\'engin' : `Disponible (${locName(a.loc)})`;
     if (a.kind !== 'binome') a.status = 'Mission terminée, disponible';
     G.dirty = true;
@@ -361,7 +396,7 @@ function doMove(a, s, dt) {
   if (s.i >= s.path.length - 1) { a.plan.shift(); a.next = null; return; }
   const from = s.path[s.i], to = s.path[s.i + 1];
   let d = edgeTime(from, to) * smokeFactor(to);
-  if (s.hose && !a.established && to.startsWith('CAGE_')) d += 26;      // etablissement dans l'escalier
+  if (s.hose && !a.established && to.startsWith('CAGE_')) d += 40;      // etablissement dans l'escalier (tuyaux, ARI)
   if (a.carry) d *= 1.7;
   a.next = to; a.prog = s.p / d;
   a.status = `${a.carry ? 'Extraction de la victime' : 'Progression'} vers ${locName(s.to)}`;
@@ -376,7 +411,7 @@ function doMove(a, s, dt) {
   s.p += dt;
   if (s.p >= d) {
     s.p = 0; s.i++; a.loc = to; G.dirty = true;
-    if (s.hose && to === 'CAGE_R3') a.established = true;
+    if (s.hose && (to === 'CAGE_R3' || to === 'CAGE_R4')) a.established = true;
     onArrive(a, to);
   }
 }
@@ -415,7 +450,7 @@ function onArrive(a, loc) {
 }
 function doSearch(a, s, dt) {
   if (a.loc !== s.room) { a.plan.unshift({ type: 'move', to: s.room }); return; }
-  if (s.t == null) { s.t = 0; s.d = 25 * smokeFactor(s.room); }
+  if (s.t == null) { s.t = 0; s.d = 40 * smokeFactor(s.room); }
   a.status = `Recherche : ${ROOM_NAMES[s.room]}`;
   // lance en protection : on refroidit si la chaleur l'impose
   const z = G.W.Z[s.room];
@@ -452,7 +487,8 @@ function doAttack(a, s, dt) {
   const zFire = ROOMS.filter(r => roomOnFire(G.W, r) || (hasFire(G.W, r) && G.W.Z[r].fireQ > 30));
   if (!zFire.length) {
     a.plan.shift(); a.flowing = false;
-    report(a, 'Feu éteint. Je procède à la reconnaissance des autres pièces.');
+    const res = G.W.smoulder.filter(x => !x.done).map(x => ROOM_NAMES[x.zone]);
+    report(a, `Flammes abattues${res.length ? ` (${res.join(', ')}) : il reste des braises et des points chauds sous les débris, fumées encore épaisses. Déblai à prévoir` : ''}. Je reconnais les autres pièces.`);
     const todo = ['CH1', 'CH3', 'CH2', 'SDB', 'CUI', 'SEJ', 'COU'].filter(r => !(G.K.rooms[r] && G.W.t - G.K.rooms[r].t < 30));
     a.plan = [...todo.map(r => ({ type: 'search', room: r })), ...a.plan];
     G.dirty = true; return;
@@ -466,6 +502,130 @@ function doAttack(a, s, dt) {
   if (!waterOK()) { a.flowing = false; a.status = 'LANCE À SEC'; return; }
   a.flowing = true; a.status = `Attaque ${a.lance} : ${ROOM_NAMES[target]}`;
   if (!s.announced) { s.announced = true; report(a, `${roomReportText(target, snapshotRoom(target))} J'attaque.`); }
+}
+// ---- deblai, controle, ventilation, feu du R+4
+function burntRooms() { return [...new Set(G.W.fires.map(f => f.zone))]; }
+function doDeblai(a, s, dt) {
+  const W = G.W;
+  a.effort = 1.5;
+  const flames = ROOMS.filter(r => hasFire(W, r));
+  const target = W.smoulder.find(x => !x.done && !roomOnFire(W, x.zone));
+  if (!target && G.r4.out && !G.r4.deblaye) {
+    if (a.loc !== 'R4_APT') { a.plan.unshift({ type: 'move', to: 'R4_APT' }); return; }
+    if (!waterOK()) { a.flowing = false; a.status = 'Déblai : lance à sec'; return; }
+    s.t4 = (s.t4 || 0) + dt; a.flowing = s.t4 % 40 < 18;
+    a.status = `Déblai : séjour du R+4 (${Math.round(100 * s.t4 / 300)} %)`;
+    if (s.t4 >= 300) { G.r4.deblaye = true; s.n = (s.n || 0) + 1; report(a, 'Déblai terminé au R+4.'); G.dirty = true; }
+    return;
+  }
+  if (!target) {
+    if (flames.length) { a.status = `Déblai en attente : feu encore actif (${flames.map(r => ROOM_NAMES[r]).join(', ')})`; a.flowing = false; return; }
+    a.plan.shift(); a.flowing = false;
+    report(a, s.n ? `Déblai terminé (${s.n} volume(s)). Plus de foyer apparent.` : 'Pas de foyer résiduel trouvé.');
+    G.dirty = true; return;
+  }
+  if (a.loc !== target.zone) { a.plan.unshift({ type: 'move', to: target.zone }); return; }
+  if (!waterOK()) { a.flowing = false; a.status = 'Déblai : lance à sec'; return; }
+  if (s.cur !== target) { s.cur = target; s.t = 0; s.d = clamp(100 + target.mj * 0.45, 150, 420); }
+  a.flowing = s.t % 40 < 18;                 // noyage par impulsions
+  a.status = `Déblai : ${ROOM_NAMES[target.zone]} (${Math.round(100 * s.t / s.d)} %)`;
+  s.t += dt;
+  if (s.t >= s.d) {
+    target.done = true; target.deblaye = true; s.n = (s.n || 0) + 1; s.cur = null;
+    G.K.rooms[target.zone] = snapshotRoom(target.zone);
+    report(a, `Déblai terminé : ${ROOM_NAMES[target.zone]}, débris noyés et dégarnis.`);
+    G.dirty = true;
+  }
+}
+function doControle(a, s, dt) {
+  const W = G.W;
+  if (!s.list) { s.list = burntRooms().concat(['COU']).filter((r, i, l) => l.indexOf(r) === i); s.i = 0; s.t = 0; s.hot = []; }
+  if (s.i >= s.list.length) {
+    a.plan.shift();
+    const flames = ROOMS.some(r => roomOnFire(W, r));
+    if (!s.hot.length && !flames && (G.r4.t0 == null || G.r4.deblaye)) { G.controle = W.t; report(a, 'Contrôle à la caméra thermique terminé : aucun point chaud, pas de propagation dans les cloisons ni au plafond.'); }
+    else report(a, `Contrôle à la caméra thermique : points chauds dans ${s.hot.map(r => ROOM_NAMES[r]).join(', ') || 'le logement'}. Déblai à poursuivre.`);
+    G.dirty = true; return;
+  }
+  const r = s.list[s.i];
+  if (a.loc !== r) { a.plan.unshift({ type: 'move', to: r }); return; }
+  a.status = `Caméra thermique : ${ROOM_NAMES[r]}`;
+  s.t += dt;
+  if (s.t >= 30) {
+    s.t = 0; s.i++;
+    if (hasResidual(W, r) || roomOnFire(W, r)) { s.hot.push(r); know('points_chauds', 'Points chauds persistants dans les pièces sinistrées'); }
+  }
+}
+function startVPP(a) {
+  const W = G.W;
+  W.vpp = true; G.vppT = W.t;
+  const flames = ROOMS.some(r => roomOnFire(W, r));
+  const imm = isOpen('IMMEUBLE'), exu = isOpen('EXUTOIRE');
+  report(a, `VPP en fonctionnement devant la porte d'immeuble.${!imm ? ' Porte d\'immeuble fermée : sans effet.' : ''}${!exu ? ' Exutoire fermé : pas d\'exutoire pour la cage.' : ''}`);
+  G.journal.push({ t: W.t, text: 'Ventilation opérationnelle (VPP) mise en œuvre.' });
+  if (flames && !G.actors.some(x => x.mission === 'ATTAQUE' && x.flowing)) penalty(12, 'VPP mis en œuvre sur un feu non circonscrit, sans attaque en eau : risque d\'activer le foyer.');
+}
+function flameOutWin(id) {
+  const W = G.W, o = W.O.find(x => x.id === id), z = W.Z[o.a], e = W.ext[id];
+  if (!o.open) return 0;
+  const q = (e ? e.fuelQ : 0) + (z.flashed && roomOnFire(W, o.a) && z.Tu > 700 ? z.fireQ * 0.15 : 0);
+  return q > 60 ? q : 0;
+}
+function updateR4(dt) {
+  const W = G.W, R = G.r4;
+  if (R.t0 == null) {
+    const q = flameOutWin('W_SEJ1') + flameOutWin('W_SEJ2');
+    const pa = G.actors.find(x => x.id === 'PA' && x.protec && x.mission === 'PA_PROTEC');
+    const prot = (pa && waterOK() ? 0.25 : 1) * (G.actors.some(x => x.loc === 'R4_APT' && x.lance && x.flowing) ? 0.4 : 1);
+    if (q > 0) R.exp += dt * clamp(q / 2500, 0.3, 1.2) * prot;
+    else R.exp = Math.max(0, R.exp - dt * 0.2);
+    if (R.exp > 240 && !R.warned) { R.warned = true; G.journal.push({ t: W.t, text: 'Les flammes sortant des fenêtres du séjour lèchent la façade et chauffent le vitrage du R+4.' }); }
+    if (R.exp > 660) {
+      R.t0 = W.t; G.fire.lastEvt = W.t; G.controle = null;
+      G.journal.push({ t: W.t, text: 'Propagation par la façade : le feu a gagné l\'appartement du R+4 (effet « chandelle »).' });
+      radio(G.actors.some(x => x.id === 'PA' && x.loc !== 'ABSENT') ? 'PA 18' : 'CA FPT 1', 'CDG', 'Flammes au R+4 ! Le vitrage au-dessus du séjour a cédé, le feu prend dans l\'appartement du dessus.', 'alerte');
+      know('feu_r4', 'Propagation au R+4 par la façade');
+      G.dirty = true;
+    }
+    return;
+  }
+  if (R.out) return;
+  const t = W.t - R.t0;
+  const decl = t > 1500 ? clamp(1 - (t - 1500) / 600, 0, 1) : 1;   // combustible du sejour du R+4 consomme
+  R.q = Math.min(2500, 0.03 * t * t) * R.k * decl;
+  if (decl <= 0) R.k = 0;
+  const att = G.actors.filter(x => x.loc === 'R4_APT' && x.flowing && waterOK());
+  for (const x of att) { const wq = (x.lance === 'LDV 250' ? 250 : 500) / 60 * 2600 * SIM.CFG.waterEff; R.k = Math.max(0, R.k - dt * SIM.CFG.knockCoef * wq / Math.max(500, Math.min(2500, 0.03 * t * t))); }
+  const pa = G.actors.find(x => x.id === 'PA' && x.protec && x.mission === 'PA_PROTEC');
+  if (pa && waterOK()) R.k = Math.max(0.35, R.k - dt * 0.0006);   // la lance exterieure freine sans eteindre
+  if (R.k < 0.03) {
+    R.out = true; R.q = 0; R.residual = 1; G.journal.push({ t: W.t, text: 'Feu du R+4 : flammes abattues.' });
+    for (const x of att) report(x, 'Feu du R+4 abattu. Foyers résiduels dans le séjour du R+4, déblai à prévoir.');
+    G.dirty = true;
+  }
+  const v = G.victims[1];
+  if (v.loc === 'R4_APT' && !v.atRue && R.q > 150) v.fed += dt * (R.q / 2500) * 0.012;
+}
+function exposureR4(a, dt) {
+  const R = G.r4;
+  if (R.t0 == null || R.out) return;
+  if (R.q > 800 && !(a.flowing && waterOK())) a.hazard += dt; else a.hazard = Math.max(0, a.hazard - dt * 0.5);
+  if (a.hazard > 20 && !a.hurt) {
+    a.hurt = true; penalty(30, `${a.label} (${a.engin}) exposé au feu du R+4 sans protection hydraulique : brûlures.`);
+    report(a, 'Binôme en difficulté au R+4, repli immédiat, un équipier brûlé.');
+    a.plan = [{ type: 'move', to: 'RUE' }, { type: 'done' }]; a.flowing = false; G.dirty = true;
+  }
+}
+function doAttackR4(a, s, dt) {
+  const R = G.r4;
+  if (R.out || R.t0 == null) {
+    a.plan.shift(); a.flowing = false;
+    if (R.residual && !R.deblaye) a.plan.unshift({ type: 'act', d: 240, label: 'Déblai du séjour du R+4', fn: () => { R.deblaye = true; report(a, 'Déblai terminé au R+4.'); } });
+    G.dirty = true; return;
+  }
+  if (!waterOK()) { a.flowing = false; a.status = 'LANCE À SEC'; return; }
+  a.flowing = true; a.status = `Attaque ${a.lance} : R+4`;
+  if (!s.announced) { s.announced = true; report(a, 'R+4 : séjour en feu, fumées jusqu\'au sol. J\'attaque.'); }
 }
 function exposure(a, dt, zo) {
   const c = conditionsAt(G.W, zo.zone, zo.h);
@@ -507,6 +667,9 @@ function tick(dt) {
     }
   }
   for (const a of G.actors) if (a.kind !== 'binome') tickActor(a, dt);
+  const paP = G.actors.find(x => x.id === 'PA' && x.protec && x.mission === 'PA_PROTEC');
+  if (paP && !G.alim) G.tank = Math.max(0, G.tank - 500 / 60 * dt);
+  updateR4(dt);
   // VSAV
   for (const a of G.actors) if (a.kind === 'vsav' && a.pec && a.loc === 'RUE') {
     for (const v of G.victims) if (v.atRue && !v.pec) {
@@ -529,6 +692,14 @@ function onSimEvent(e) {
       if (a.flowing) penalty(5, `${a.label} (${a.engin}) exposé à un embrasement, protégé par sa lance.`);
       else { a.hurt = true; penalty(35, `${a.label} (${a.engin}) pris dans un embrasement généralisé.`); report(a, 'Embrasement ! Repli d\'urgence, binôme blessé.'); a.plan = [{ type: 'move', to: 'RUE' }, { type: 'done' }]; }
     }
+  }
+  if (e.type === 'reprise') {
+    G.fire.lastEvt = e.t; G.controle = null; G.reprises++;
+    G.journal.push({ t: e.t, text: `Reprise de feu : ${ROOM_NAMES[e.id] || e.id} (foyer résiduel non déblayé).` });
+    const here = G.actors.find(a => a.kind === 'binome' && a.loc === e.id);
+    if (here) report(here, `Reprise de feu dans ${ROOM_NAMES[e.id].toLowerCase()} ! Les braises sous les débris sont reparties.`);
+    else if (G.W.O.some(o => o.a === e.id && o.b === 'EXT' && o.open)) radio('CA FPT 1', 'CDG', `Lueurs et fumées qui reprennent au R+3 (${ROOM_NAMES[e.id].toLowerCase()}) !`, 'alerte');
+    G.dirty = true;
   }
   if (e.type === 'vitre') G.journal.push({ t: e.t, text: 'Bris de vitrage : ' + e.id });
   if (e.type === 'eteint') G.journal.push({ t: e.t, text: 'Foyer éteint : ' + (ROOM_NAMES[e.id] || e.id) });
@@ -562,8 +733,10 @@ function evalCR(f) {
   const ok = (c, good, bad, p) => { out.push({ ok: !!c, text: c ? good : bad }); if (c) pts += p; };
   const vfound = G.victims.filter(v => v.found);
   ok(!vfound.length || has(f.vois + ' ' + f.victimes, /victime|personne|ua|ur|impliqu|blesse|intox/), 'Bilan victimes transmis.', 'Victimes retrouvées non mentionnées.', 30);
-  const out1 = !ROOMS.some(r => roomOnFire(G.W, r));
-  ok(out1 ? has(f.vois, /eteint|maitris|circonscrit/) : !has(f.vois, /eteint/), out1 ? 'Situation du feu exacte (éteint / maîtrisé).' : 'Situation du feu exacte (en cours).', 'L\'état du feu annoncé ne correspond pas à la réalité.', 30);
+  const cur = G.fire.cur, said = has(f.vois, /eteint/) ? 'eteint' : has(f.vois, /maitrise/) && !has(f.vois, /non maitrise/) ? 'maitrise' : has(f.vois, /circonscrit/) ? 'circonscrit' : has(f.vois, /non maitrise|en cours|developpe|attaque|embras|feu/) ? 'actif' : null;
+  const okFire = said === cur || (said === 'actif' && (cur === 'developpement' || cur === 'non_maitrise')) || (said === 'circonscrit' && cur === 'maitrise');
+  const curL = (FIRE_STATES.find(x => x[0] === cur) || [0, ''])[1].toLowerCase();
+  ok(okFire, `Situation du feu exacte (${curL}).`, said === 'eteint' && cur !== 'eteint' ? `Feu annoncé éteint alors qu'il est ${curL} : tant que le déblai et le contrôle ne sont pas faits, on ne déclare pas un feu éteint.` : `L'état du feu annoncé ne correspond pas à la réalité (${curL}).`, 30);
   ok((f.fais || '').length > 10, 'Actions en cours décrites.', '« Je fais » vide.', 20);
   ok(has(f.suis, /glycines|14/), 'Localisation rappelée.', 'Localisation non rappelée.', 20);
   return { pts, out };
@@ -596,7 +769,7 @@ function gauges() {
   const Qapt = ROOMS.reduce((s, r) => s + W.Z[r].fireQ, 0);
   const burning = ROOMS.filter(r => roomOnFire(W, r)).length;
   const cageSmoke = LEVELS.filter((l, i) => conditionsAt(W, 'CAGE', i * 2.6 + 1.5).vis < 3).length;
-  const situation = clamp(100 - Qapt / 90 - cageSmoke * 6 - Math.max(0, burning - 1) * 12, 0, 100);
+  const situation = clamp(100 - (Qapt + G.r4.q) / 90 - cageSmoke * 6 - Math.max(0, burning - 1) * 12 - (hasResidual(W) ? 8 : 0), 0, 100);
   const victimes = G.victims.reduce((s, v) => s + (v.fed >= 2.5 ? 0 : (1 - Math.min(v.fed, 2.5) / 2.5) * 100), 0) / G.victims.length;
   const securite = clamp(100 - G.safety.reduce((s, p) => s + p.pts, 0), 0, 100);
   let cmd = 100;
@@ -624,7 +797,7 @@ function endGame(reason) {
   UI.showDebrief && UI.showDebrief();
 }
 function debriefData() {
-  const g = gauges(), pts = [];
+  const g = gauges(), pts = [], W = G.W;
   const amb = G.ambiance;
   if (!amb) pts.push({ ok: false, text: 'Aucun message d\'ambiance transmis.' });
   else amb.ev.out.forEach(o => pts.push(o));
@@ -639,6 +812,16 @@ function debriefData() {
   if (G.requests.SMUR || !G.victims.some(v => v.fed >= 0.3)) pts.push({ ok: true, text: G.requests.SMUR ? 'Médicalisation demandée.' : 'Pas de victime nécessitant une médicalisation.' });
   else pts.push({ ok: false, text: 'Victime intoxiquée sans demande de SMUR.' });
   pts.push({ ok: !isOpen('PALIERE') || !ROOMS.some(r => roomOnFire(G.W, r)), text: isOpen('PALIERE') ? 'La porte palière est restée ouverte pendant le feu : la cage s\'est enfumée.' : 'Porte palière maîtrisée.' });
+  const burnt = burntRooms();
+  if (W.fires.some(f => f.out)) {
+    const left = burnt.filter(r => hasResidual(W, r) || hasFire(W, r)).map(r => ROOM_NAMES[r]);
+    pts.push({ ok: !left.length, text: left.length ? `Feu ou foyers résiduels encore présents en fin d'exercice : ${left.join(', ')}.` : 'Déblai des pièces sinistrées réalisé.' });
+    pts.push({ ok: !!G.controle, text: G.controle ? `Contrôle à la caméra thermique effectué à ${hhmm(G.controle)}.` : 'Pas de contrôle à la caméra thermique avant la fin : le feu ne pouvait pas être déclaré éteint.' });
+  }
+  if (G.reprises) pts.push({ ok: false, text: `${G.reprises} reprise(s) de feu : foyer résiduel laissé sans déblai.` });
+  if (G.r4.t0 != null) pts.push({ ok: false, text: `Propagation au R+4 par la façade à ${hhmm(G.r4.t0)} : flammes sorties trop longtemps par les fenêtres du séjour (attaque tardive ou façade non protégée).` });
+  else if (G.r4.exp > 60) pts.push({ ok: true, text: 'Façade exposée aux flammes mais pas de propagation au R+4.' });
+  pts.push({ ok: !!W.vpp, text: W.vpp ? `Ventilation opérationnelle mise en œuvre à ${hhmm(G.vppT)}.` : 'Pas de ventilation opérationnelle : logement et cage restés enfumés.' });
   G.safety.forEach(p => pts.push({ ok: false, text: `Sécurité : ${p.text}` }));
   if (G.pauses) pts.push({ ok: false, text: `${G.pauses} pause(s), ${fmtDur(G.pausedTime)} au total.` });
   return { g, pts };
@@ -711,6 +894,8 @@ function observeText(what) {
   if (what === 'R4') {
     const v2 = G.victims[1];
     know('voisin_r4', 'Voisin du R+4 à sa fenêtre');
+    if (G.r4.t0 != null && !G.r4.out) return `R+4 au-dessus du feu : vitrage cassé, flammes et fumées noires à la fenêtre du R+4.${v2.loc === 'R4_APT' && !v2.atRue ? ' L\'occupant n\'est plus visible.' : ''}`;
+    if (G.r4.exp > 240) return `R+4 : les flammes du R+3 lèchent la façade jusqu'à la fenêtre du R+4, le vitrage noircit.${v2.mode === 'fenetre' ? ' Un homme âgé appelle à l\'aide.' : ''}`;
     return v2.mode === 'fenetre' ? 'R+4 au-dessus du feu : un homme âgé appelle à l\'aide à sa fenêtre et menace de descendre.' : 'R+4 : l\'occupant est à sa fenêtre, plus calme.';
   }
   if (what.startsWith('CAGE_')) {
@@ -742,15 +927,21 @@ function observe(what) {
 const FIRE_STATES = [['developpement', 'En développement'], ['non_maitrise', 'Non maîtrisé'], ['circonscrit', 'Circonscrit'], ['maitrise', 'Maîtrisé'], ['eteint', 'Éteint']];
 function updateFireStatus() {
   const W = G.W, F = G.fire;
-  const Q = ROOMS.reduce((s, r) => s + W.Z[r].fireQ, 0);
+  const Q = ROOMS.reduce((s, r) => s + W.Z[r].fireQ, 0) + G.r4.q;
   F.qs = F.qs == null ? Q : F.qs + (Q - F.qs) * 0.01;   // lissage ~10 s
   if (!F.lastHist || W.t - F.lastHist >= 10) { F.hist.push(F.qs); F.lastHist = W.t; if (F.hist.length > 13) F.hist.shift(); }
-  const burning = ROOMS.filter(r => hasFire(W, r));
+  const burning = ROOMS.filter(r => hasFire(W, r) && (roomOnFire(W, r) || W.Z[r].fireQ > 30));
+  const r4On = G.r4.t0 != null && !G.r4.out;
+  if (burning.length || r4On) F.lastFlame = W.t;
   const trend = F.hist.length > 6 ? F.qs - F.hist[F.hist.length - 7] : 0;
+  const residual = hasResidual(W) || (G.r4.out && !G.r4.deblaye);
   let cand;
-  if (!burning.length) cand = 'eteint';
-  else if (F.qs < 400) cand = 'maitrise';
-  else if (burning.every(r => (W.water[r] || 0) > 0) && W.t - F.lastEvt > 90) cand = 'circonscrit';
+  // Eteint : plus de flammes, deblai fait et controle a la camera thermique effectue.
+  // Maitrise : flammes abattues depuis 2 min, sans reprise ; il reste deblai et controle.
+  if (!burning.length && !r4On && !residual && G.controle) cand = 'eteint';
+  else if (!burning.length && !r4On && W.t - (F.lastFlame || 0) > 120) cand = 'maitrise';
+  else if (!burning.length && !r4On) cand = F.cur === 'developpement' ? 'non_maitrise' : 'circonscrit';
+  else if (burning.every(r => (W.water[r] || 0) > 0) && (!r4On || G.actors.some(x => x.loc === 'R4_APT' && x.flowing)) && W.t - F.lastEvt > 90) cand = 'circonscrit';
   else if (trend > 400 || W.t - F.lastEvt < 120) cand = 'developpement';
   else cand = 'non_maitrise';
   if (cand === F.cur) { F.cand = null; return; }
@@ -782,7 +973,11 @@ function modelMessage(type) {
   dem.push('1 FPT en renfort'); dem.push('police pour la circulation');
   out.demande = dem.join(', ') + '.';
   if (type === 'cr') {
-    out.vois = burning.length ? `Feu d'appartement au R+3 ${G.fire.cur === 'circonscrit' ? 'circonscrit' : 'en cours'}.` : 'Feu éteint au R+3, déblai et ventilation en cours.';
+    const cur = G.fire.cur;
+    out.vois = cur === 'eteint' ? 'Feu éteint au R+3 : déblai terminé, contrôle à la caméra thermique sans point chaud.'
+      : cur === 'maitrise' ? 'Feu maîtrisé au R+3 : flammes abattues, déblai et ventilation en cours, contrôle à suivre.'
+      : cur === 'circonscrit' ? `Feu circonscrit au R+3${G.r4.t0 != null ? ' et au R+4' : ''}, attaque en cours.`
+      : `Feu d'appartement au R+3 ${cur === 'developpement' ? 'en développement' : 'non maîtrisé'}${G.r4.t0 != null && !G.r4.out ? ', propagation au R+4 par la façade' : ''}.`;
     const vs = G.victims.filter(v => v.found || v.atRue).map(v => `${v.name} : ${vState(v).s.toLowerCase()}${v.pec ? ', pris(e) en charge par le VSAV' : ''}`);
     out.victimes = vs.length ? vs.join(' ; ') + '.' : 'Aucune victime retrouvée à ce stade.';
   }
