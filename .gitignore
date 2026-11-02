@@ -1,0 +1,6 @@
+_tmp/
+node_modules/
+*.png
+!assets/**/*.png
+fds/sortie*/
+.DS_Store
