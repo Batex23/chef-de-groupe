@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Simulateur de gestion opérationnelle et de commandement pour chefs de groupe et chefs de colonne sapeurs-pompiers.">
+<title>Chef de groupe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="src/ui/style.css">
+
+</head>
+<body class="home">
+<canvas id="view" aria-label="Vue 3D de l'intervention"></canvas>
+
+<header class="hud">
+  <div class="brand">Chef de groupe <small>Feu d'appartement R+3 · Mérignac</small></div>
+  <div id="clock">19:42:00</div>
+  <div id="chrono" class="chrono">Message d'ambiance : 5:00</div>
+  <div><div class="fslab">SITUATION DU FEU</div><div id="firestate"></div></div>
+  <div id="busy" hidden><span></span><b><i></i></b></div>
+  <div class="ctrl">
+    <button class="btn" id="btn-pause" aria-pressed="false">Pause</button>
+    <span class="spdl">Vitesse</span>
+    <button class="btn spd" data-s="1" aria-pressed="true">×1</button>
+    <button class="btn spd" data-s="3" aria-pressed="false">×3</button>
+    <button class="btn danger" id="btn-fin">Fin d'intervention</button>
+  </div>
+</header>
+<div id="pausebadge" hidden>PAUSE</div>
+
+<div class="views" aria-label="Points de vue">
+  <button class="btn" data-view="rue">Face rue</button>
+  <button class="btn" data-view="arriere">Face cour</button>
+  <button class="btn" data-view="aerien">Vue aérienne</button>
+  <button class="btn" data-view="coupe" aria-pressed="false">Coupe du R+3</button>
+</div>
+
+<div class="side">
+  <div id="tankhud" class="tank"></div>
+  <div id="gauges"></div>
+</div>
+<div class="help">Clic : sélectionner un engin, un binôme, une fenêtre ou un témoin · Glisser : tourner · Molette : zoom · Clic droit : déplacer</div>
+
+<aside id="panel">
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" data-p="p-sitac" aria-selected="true">SITAC</button>
+    <button class="tab" role="tab" data-p="p-msg" aria-selected="false">Messages</button>
+    <button class="tab" role="tab" data-p="p-carnet" aria-selected="false">Carnet</button>
+    <button class="tab" role="tab" data-p="p-radio" aria-selected="false">Radio</button>
+    <button id="btn-panel" aria-expanded="true" aria-label="Réduire le panneau">⌃</button>
+  </div>
+  <div class="tp" id="p-sitac"><canvas id="plan" aria-label="SITAC du R+3, cliquer pour agrandir" title="Cliquer pour agrandir"></canvas><p class="pcap">Cliquez sur la SITAC pour l'agrandir. Elle se met à jour avec les comptes rendus des binômes et les témoignages, avec l'heure de chaque renseignement.</p></div>
+  <div class="tp" id="p-msg" hidden>
+    <div class="mhead"><h3>Message d'ambiance</h3><span id="amb-state"></span></div>
+    <form id="form-amb" autocomplete="off">
+      <label class="f">JE SUIS<input type="text" name="suis" id="a-suis" placeholder="Adresse, commune, prise de COS…"></label>
+      <label class="f">JE VOIS<textarea name="vois" id="a-vois" rows="3" placeholder="Nature, ampleur, victimes…"></textarea></label>
+      <label class="f">JE PRÉVOIS<textarea name="prevois" id="a-prevois" rows="2" placeholder="Évolution prévisible…"></textarea></label>
+      <label class="f">JE FAIS<textarea name="fais" id="a-fais" rows="2" placeholder="Actions engagées…"></textarea></label>
+      <label class="f">JE DEMANDE<input type="text" name="demande" id="a-demande" placeholder="Moyens, services…"></label>
+      <div class="chk" aria-label="Renforts">
+        <label><input type="checkbox" name="renf" value="FPT2" id="a-r1"> FPT</label>
+        <label><input type="checkbox" name="renf" value="VSAV2" id="a-r2"> VSAV</label>
+        <label><input type="checkbox" name="renf" value="SMUR" id="a-r3"> SMUR</label>
+        <label><input type="checkbox" name="renf" value="CDC" id="a-r4"> Chef de colonne</label>
+        <label><input type="checkbox" name="renf" value="POLICE" id="a-r5"> Police</label>
+        <label><input type="checkbox" name="renf" value="ENEDIS" id="a-r6"> ENEDIS</label>
+      </div>
+      <label class="chk"><input type="checkbox" name="cos" id="a-cos"> Je prends le COS</label>
+      <button class="send" type="submit">Transmettre au CODIS</button>
+    </form>
+    <hr class="sep">
+    <div class="mhead"><h3>Compte rendu</h3><span class="hint" id="cr-state"></span></div>
+    <form id="form-cr" autocomplete="off" hidden>
+      <label class="f">JE SUIS<input type="text" name="suis" id="c-suis"></label>
+      <label class="f">JE VOIS<textarea name="vois" id="c-vois" rows="2" placeholder="Situation actuelle du feu…"></textarea></label>
+      <label class="f">VICTIMES<textarea name="victimes" id="c-vict" rows="2" placeholder="Nombre, état, prise en charge…"></textarea></label>
+      <label class="f">JE FAIS<textarea name="fais" id="c-fais" rows="2"></textarea></label>
+      <label class="f">JE DEMANDE<input type="text" name="demande" id="c-demande"></label>
+      <div class="chk" aria-label="Renforts">
+        <label><input type="checkbox" name="renf" value="FPT2" id="c-r1"> FPT</label>
+        <label><input type="checkbox" name="renf" value="VSAV2" id="c-r2"> VSAV</label>
+        <label><input type="checkbox" name="renf" value="SMUR" id="c-r3"> SMUR</label>
+        <label><input type="checkbox" name="renf" value="CDC" id="c-r4"> Chef de colonne</label>
+        <label><input type="checkbox" name="renf" value="POLICE" id="c-r5"> Police</label>
+        <label><input type="checkbox" name="renf" value="ENEDIS" id="c-r6"> ENEDIS</label>
+      </div>
+      <button class="send" type="submit">Transmettre au CODIS</button>
+    </form>
+  </div>
+  <div class="tp" id="p-carnet" hidden><div id="carnet"></div></div>
+  <div class="tp" id="p-radio" hidden><div id="radio"></div></div>
+</aside>
+
+<div id="ctx" hidden role="dialog" aria-label="Ordres"></div>
+<div id="dialog" hidden role="dialog" aria-label="Témoin"></div>
+<div id="toast" aria-live="polite"></div>
+
+<div class="overlay" id="home">
+  <div class="homein">
+    <div class="kicker">Gestion opérationnelle et commandement</div>
+    <h1>Chef de <span>groupe</span></h1>
+    <p class="sub">Arrivez sur l'intervention, lisez le feu, faites vos reconnaissances, commandez vos chefs d'agrès et rendez compte. Le feu évolue en continu, selon vos décisions.</p>
+    <section class="sect"><h2>Interventions</h2>
+      <div class="scen">
+        <div class="sc"><b>Feu d'appartement R+3</b><span>Mérignac · nuit · 1 victime présumée · FPT, PA 18, VSAV</span><button class="play" data-play="r3">Jouer</button></div>
+        <div class="sc locked"><b>Feu de pizzeria</b><span>D'après l'exercice ENSOSP GOC 4001 · chef de groupe puis chef de colonne</span><em class="soon">À venir</em></div>
+        <div class="sc locked"><b>Accident PL / TER</b><span>Passage à niveau, citerne fuyarde, incarcéré</span><em class="soon">À venir</em></div>
+        <div class="sc locked"><b>Odeur de gaz en résidence</b><span>Travaux de voirie, évacuation, RCH en renfort</span><em class="soon">À venir</em></div>
+      </div>
+    </section>
+    <section class="sect"><h2>Progression</h2>
+      <div class="ladder"><span class="rk on">Chef de groupe</span><span class="rk">Chef de colonne · PC</span><span class="rk">Chef de site</span><span class="rk">Spécialités : FDF, RCH, RAD, USAR</span><span class="rk">Mode formateur</span></div>
+    </section>
+    <div class="settings"><label for="quality">Graphismes</label><select id="quality"><option value="standard">Standard</option><option value="leger">Léger (portable de caserne)</option></select><span class="hint">Recharge la page.</span></div>
+  </div>
+</div>
+
+<div class="overlay" id="intro" hidden>
+  <div class="card">
+    <h2>Prise en compte de l'opération</h2>
+    <p class="lead">Vous êtes chef de groupe. Vous arrivez sur les lieux une minute après le FPT 1.</p>
+    <div class="ticket">
+      <div class="tk"><b>SDIS 33 — TICKET DE DÉPART</b><span>00-PC-0331842</span></div>
+      <div><b>19h34</b> · FEU D'APPARTEMENT</div>
+      <div>14 rue des Glycines, résidence Les Pins, bât. B — MÉRIGNAC</div>
+      <div>OPER 01 // fumées par les fenêtres du 3e étage, la requérante est sortie.</div>
+      <div>Engins : FPT 1, PA 18, VSAV 1, CDG (vous)</div>
+      <div>Météo : 9 °C, vent faible d'ouest, nuit tombée.</div>
+    </div>
+    <div class="howto">
+      <div><b>Lire le feu</b>Tournez autour de l'immeuble. Cliquez une fenêtre, la cage ou la porte : chaque observation vous prend 6 s.</div>
+      <div><b>Reconnaître</b>Vous restez dehors. L'intérieur se dévoile sur la SITAC et dans la vue en coupe au fil des comptes rendus.</div>
+      <div><b>Commander</b>Cliquez sur un engin ou un binôme pour lui donner une mission. Chaque binôme a sa couleur.</div>
+      <div><b>Questionner</b>Les témoins arrivent au fil de l'intervention. Chaque question prend 12 s.</div>
+      <div><b>Rendre compte</b>Message d'ambiance dans les 5 minutes, puis comptes rendus. Chaque message est corrigé.</div>
+    </div>
+    <button class="start" id="btn-start">Arriver sur les lieux</button> <button class="ghost" id="btn-back">Retour</button>
+  </div>
+</div>
+
+<div class="overlay" id="sitacbig" hidden>
+  <div class="card"><div class="sbh"><h2>SITAC — R+3</h2><span class="hint">Mise à jour en direct · Échap pour fermer</span><button class="btn" id="sitac-close">Fermer</button></div><canvas id="bigplan" aria-label="SITAC agrandie"></canvas></div>
+</div>
+<div class="overlay" id="corr" hidden>
+  <div class="card"><h2>Correction du message</h2><div id="corr-body"></div><button class="start" id="corr-close">Reprendre l'intervention</button></div>
+</div>
+<div class="overlay" id="debrief" hidden>
+  <div class="card"><h2>Débriefing</h2><div id="debrief-body"></div><button class="start" id="btn-restart">Retour à l'accueil</button></div>
+</div>
+<div class="overlay" id="nogl" hidden><div class="card"><h2>3D indisponible</h2><p class="lead">Ce navigateur ne permet pas l'affichage 3D (WebGL). Essayez avec Chrome, Edge ou Firefox à jour, ou activez l'accélération matérielle.</p></div></div>
+
+<div class="overlay" id="loading"><div class="card loadcard"><h2>Préparation de l'intervention</h2><p class="lead">Génération des matériaux et de la scène 3D…</p></div></div>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+} }
+</script>
+<script src="src/core/sim.js"></script>
+<script src="src/core/game.js"></script>
+<script type="module" src="src/render/scene.js"></script>
+<script src="src/ui/app.js"></script>
+</body>
+</html>
