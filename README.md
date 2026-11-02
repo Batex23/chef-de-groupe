@@ -11,7 +11,11 @@ Le jeu tourne entièrement dans le navigateur : rien à installer, ce qui permet
 - Scénario « Feu d'appartement R+3 », Mérignac, de nuit : 1 FPT, 1 PA 18, 1 VSAV et le chef de groupe (doctrine de référence SDIS 33).
 - Moteur feu en temps réel, calculé pièce par pièce : couche de fumée, température, O₂ et CO, embrasement, bris des vitrages, effet de l'eau, dose toxique des victimes. Il est calé sur des calculs FDS (voir `fds/`).
 - Scène 3D : bâtiments construits avec un kit de façade (murs épais, fenêtres en creux, volets, balcons), vue en coupe du niveau sinistré qui se dévoile au fil des reconnaissances, fumées et flammes pilotées par le moteur.
-- Ordres par clic sur les engins et les binômes, témoins qui arrivent au fil de l'intervention, SITAC en temps réel, message d'ambiance chronométré (5 min) et corrigé, débriefing.
+- Intervention découpée en phases selon l'algorithme du GOC : arrivée et réactions immédiates, raisonnement tactique, conduite.
+- Raisonnement tactique guidé (SAOIECL). L'ordre initial distribue les missions aux engins, puis il est corrigé et comparé à un ordre type.
+- SITAC dessinée par le joueur avec les symboles conventionnels (feu, fumées, victimes, dangers, attaque, sauvetage, reconnaissance, établissements, moyens), superposée aux renseignements et évaluée au débriefing.
+- Rythme lent par défaut (temps ralenti de moitié) pour laisser le temps du raisonnement. Rythme réel ou rapide au choix.
+- Ordres de conduite par clic sur les engins et les binômes, témoins qui arrivent au fil de l'intervention, message d'ambiance chronométré (5 min) et corrigé, débriefing.
 
 ## Lancer en local
 

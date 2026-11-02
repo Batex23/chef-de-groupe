@@ -188,3 +188,35 @@ tr.ordre td:nth-child(3) { color: var(--cmd); } tr.alerte td { color: #ffb3b6; }
 
 .loadcard { width: min(460px, 100%); text-align: center; }
 #loading { z-index: 40; place-items: center; }
+
+/* ---------- phases, raisonnement tactique, outils SITAC */
+.phase { display: flex; gap: 2px; }
+.phz { font: 600 12px/1 var(--f-disp); letter-spacing: .05em; text-transform: uppercase; padding: 6px 8px; background: var(--panel2); color: var(--mute); }
+.phz:first-child { border-radius: 4px 0 0 4px; } .phz:last-child { border-radius: 0 4px 4px 0; }
+.phz.on { background: var(--cmd); color: #fff; }
+.btn.rt { border-color: var(--cmd); color: #d9c9ff; }
+.oicard { width: min(1100px, 100%); }
+.oig { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+#form-oi { gap: 12px; }
+#form-oi label.f span { color: var(--ink-soft); letter-spacing: 0; font-family: var(--f-body); font-weight: 500; }
+#form-oi b, #form-oi legend b { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 3px; background: var(--cmd); color: #fff; font: 700 13px var(--f-mono); margin-right: 6px; }
+fieldset { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin: 0; min-width: 0; }
+legend { padding: 0 6px; color: var(--ink-soft); font-size: 13px; }
+.oil { display: grid; gap: 5px; }
+.oil label { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--ink-soft); }
+.oil input { margin-top: 3px; }
+.exe { display: grid; grid-template-columns: minmax(150px, 220px) 1fr auto; gap: 6px 10px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.exe:last-child { border-bottom: 0; }
+.exe .who { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.exe .who .tag { font-size: 11px; color: #0d141c; background: var(--tc); padding: 3px 6px; border-radius: 3px; font-family: var(--f-mono); font-weight: 700; }
+.exe select { width: 100%; font-size: 13px; padding: 5px 6px; }
+@media (max-width: 760px) { .exe { grid-template-columns: 1fr; } }
+.stools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+.stl { font: 600 11px var(--f-mono); color: var(--mute); letter-spacing: .06em; text-transform: uppercase; margin: 0 4px 0 8px; }
+.st { display: flex; gap: 6px; align-items: center; background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 5px 9px; cursor: pointer; font-size: 13px; }
+.st[aria-pressed="true"] { border-color: var(--cmd); background: rgba(154,114,255,.2); }
+.sw { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }
+.sw.inc { background: var(--inc); } .sw.smk { background: #6e7076; } .sw.pers { background: var(--pers); } .sw.risk { background: var(--risk); } .sw.cmd { background: var(--cmd); } .sw.eau { background: var(--eau); }
+.sw.arrow { height: 3px; width: 16px; border-radius: 0; } .sw.dash { background: repeating-linear-gradient(90deg, var(--cmd) 0 4px, transparent 4px 7px); } .sw.line { height: 3px; width: 16px; }
+.sw.box { background: transparent; border: 2px solid var(--cmd); }
+#bigplan { cursor: crosshair; }

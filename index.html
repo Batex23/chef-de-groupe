@@ -17,13 +17,16 @@
   <div class="brand">Chef de groupe <small>Feu d'appartement R+3 · Mérignac</small></div>
   <div id="clock">19:42:00</div>
   <div id="chrono" class="chrono">Message d'ambiance : 5:00</div>
+  <div><div class="fslab">PHASE</div><div id="phase" class="phase"></div></div>
   <div><div class="fslab">SITUATION DU FEU</div><div id="firestate"></div></div>
   <div id="busy" hidden><span></span><b><i></i></b></div>
   <div class="ctrl">
     <button class="btn" id="btn-pause" aria-pressed="false">Pause</button>
-    <span class="spdl">Vitesse</span>
-    <button class="btn spd" data-s="1" aria-pressed="true">×1</button>
-    <button class="btn spd" data-s="3" aria-pressed="false">×3</button>
+    <button class="btn rt" id="btn-oi">Raisonnement tactique</button>
+    <span class="spdl">Rythme</span>
+    <button class="btn spd" data-s="0.5" aria-pressed="true" title="Temps ralenti de moitié">Lent</button>
+    <button class="btn spd" data-s="1" aria-pressed="false" title="Temps réel">Réel</button>
+    <button class="btn spd" data-s="2" aria-pressed="false" title="Temps accéléré">Rapide</button>
     <button class="btn danger" id="btn-fin">Fin d'intervention</button>
   </div>
 </header>
@@ -141,7 +144,46 @@
 </div>
 
 <div class="overlay" id="sitacbig" hidden>
-  <div class="card"><div class="sbh"><h2>SITAC — R+3</h2><span class="hint">Mise à jour en direct · Échap pour fermer</span><button class="btn" id="sitac-close">Fermer</button></div><canvas id="bigplan" aria-label="SITAC agrandie"></canvas></div>
+  <div class="card"><div class="sbh"><h2>SITAC — R+3</h2><span class="hint">Renseignements en direct, et votre SITAC dessinée par-dessus · Échap pour fermer</span><button class="btn" id="sitac-close">Fermer</button></div>
+    <div class="stools" role="toolbar" aria-label="Outils de dessin de la SITAC">
+      <span class="stl">Dessiner</span>
+      <button class="st" data-t="feu"><i class="sw inc"></i>Feu</button>
+      <button class="st" data-t="fumee"><i class="sw smk"></i>Fumées</button>
+      <button class="st" data-t="victime"><i class="sw pers"></i>Victime</button>
+      <button class="st" data-t="danger"><i class="sw risk"></i>Danger</button>
+      <button class="st" data-t="attaque"><i class="sw inc arrow"></i>Attaque</button>
+      <button class="st" data-t="sauvetage"><i class="sw pers arrow"></i>Sauvetage</button>
+      <button class="st" data-t="reco"><i class="sw cmd arrow dash"></i>Reconnaissance</button>
+      <button class="st" data-t="eau"><i class="sw eau line"></i>Établissement</button>
+      <button class="st" data-t="moyen"><i class="sw cmd box"></i>Moyen</button>
+      <select id="st-moyen" aria-label="Moyen à placer"><option>FPT 1</option><option>BAT</option><option>BAL</option><option>PA 18</option><option>VSAV 1</option><option>VLCG</option><option>FPT 2</option></select>
+      <button class="st" data-t="gomme">Gomme</button>
+      <span class="stl">Afficher</span>
+      <select id="st-view" aria-label="Couches affichées"><option value="both">Renseignements et ma SITAC</option><option value="user">Ma SITAC seule</option><option value="info">Renseignements seuls</option></select>
+    </div>
+    <canvas id="bigplan" aria-label="SITAC agrandie, zone de dessin"></canvas>
+    <p class="hint">Cliquez pour poser un symbole. Pour une action ou un établissement, cliquez-glissez du départ vers l'arrivée.</p></div>
+</div>
+<div class="overlay" id="oiwin" hidden>
+  <div class="card oicard">
+    <div class="sbh"><h2>Raisonnement tactique</h2><span class="hint">Le temps continue de s'écouler. Les ordres de l'exécution partent quand vous donnez l'ordre initial.</span><button class="btn" id="oi-close">Fermer</button></div>
+    <form id="form-oi" autocomplete="off">
+      <div class="oig">
+        <label class="f"><span><b>S</b> Situation · où ? quoi ? contre quoi ?</span><textarea name="S" id="oi-s" rows="3"></textarea></label>
+        <label class="f"><span><b>A</b> Anticipation · si je ne fais rien ? jusqu'où ?</span><textarea name="A" id="oi-a" rows="3"></textarea></label>
+      </div>
+      <div class="oig">
+        <fieldset><legend><b>O</b> Objectifs · quoi faire ?</legend><div id="oi-obj" class="oil"></div></fieldset>
+        <fieldset><legend><b>I</b> Idées de manœuvre · comment ?</legend><div id="oi-im" class="oil"></div></fieldset>
+      </div>
+      <fieldset><legend><b>E</b> Exécution · avec quoi, par qui ?</legend><div id="oi-exe"></div></fieldset>
+      <div class="oig">
+        <label class="f"><span><b>C</b> Commandement</span><input type="text" name="C" id="oi-c" value="COS : chef de groupe, VLCG au pied de l'immeuble, comptes rendus sur le canal opérationnel."></label>
+        <label class="f"><span><b>L</b> Logistique</span><input type="text" name="L" id="oi-l" placeholder="Point de regroupement des victimes, renforts…"></label>
+      </div>
+      <button class="send" type="submit">Donner l'ordre initial</button>
+    </form>
+  </div>
 </div>
 <div class="overlay" id="corr" hidden>
   <div class="card"><h2>Correction du message</h2><div id="corr-body"></div><button class="start" id="corr-close">Reprendre l'intervention</button></div>

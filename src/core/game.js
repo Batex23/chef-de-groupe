@@ -48,6 +48,7 @@ function newGame() {
     K: { layout: false, facts: {}, rooms: {}, cage: {} },
     asked: {}, actors: [], victims: [], timers: [], dirty: true, lastUI: 0, codisRelance: false,
     busy: null, observations: [], fire: { cur: 'developpement', cand: null, candT: 0, hist: [], lastEvt: 0, log: [] },
+    phase: 'arrivee', oi: null, sitacUser: [],
     witnesses: WITNESSES.map(w => ({ id: w.id, present: false, appearT: w.appear, arrivedT: null })),
   });
   for (const w of G.witnesses) G.timers.push({ t: w.appearT, fn: () => { w.present = true; w.arrivedT = G.W.t; G.dirty = true;
@@ -360,7 +361,7 @@ function doMove(a, s, dt) {
   if (s.i >= s.path.length - 1) { a.plan.shift(); a.next = null; return; }
   const from = s.path[s.i], to = s.path[s.i + 1];
   let d = edgeTime(from, to) * smokeFactor(to);
-  if (s.hose && !a.established && to.startsWith('CAGE_')) d += 18;      // etablissement dans l'escalier
+  if (s.hose && !a.established && to.startsWith('CAGE_')) d += 26;      // etablissement dans l'escalier
   if (a.carry) d *= 1.7;
   a.next = to; a.prog = s.p / d;
   a.status = `${a.carry ? 'Extraction de la victime' : 'Progression'} vers ${locName(s.to)}`;
@@ -601,6 +602,7 @@ function gauges() {
   let cmd = 100;
   const since = W.t - T_ARRIVEE;
   if (G.ambiance) cmd -= (100 - G.ambiance.ev.pts) * 0.5;
+  if (G.oi) cmd -= (100 - G.oi.ev.pts) * 0.25; else if (since > 600) cmd -= Math.min(25, (since - 600) / 24);
   else if (since > 300) cmd -= Math.min(50, 20 + (since - 300) / 12);
   if (G.ambiance && since > 20 * 60 && !G.crs.length) cmd -= 15;
   for (const c of G.crs) cmd += (c.ev.pts - 70) * 0.05;
@@ -626,6 +628,9 @@ function debriefData() {
   const amb = G.ambiance;
   if (!amb) pts.push({ ok: false, text: 'Aucun message d\'ambiance transmis.' });
   else amb.ev.out.forEach(o => pts.push(o));
+  if (!G.oi) pts.push({ ok: false, text: 'Aucun ordre initial formalisé.' });
+  else G.oi.ev.out.filter(o => !o.ok).forEach(o => pts.push({ ok: false, text: 'Ordre initial : ' + o.text }));
+  evalSitac().forEach(o => pts.push({ ok: o.ok, text: 'SITAC : ' + o.text }));
   if (!G.crs.length) pts.push({ ok: false, text: 'Aucun compte rendu transmis.' });
   else G.crs[G.crs.length - 1].ev.out.forEach(o => pts.push(o));
   const v1 = G.victims[0], v2 = G.victims[1];
@@ -784,6 +789,112 @@ function modelMessage(type) {
   return out;
 }
 
+// ===========================================================================
+// ORDRE INITIAL (SAOIECL) : objectifs, idees de manoeuvre, execution
+// ===========================================================================
+const OBJECTIFS = [
+  ['o_sauver', 'Sauver les personnes menacées au R+3'],
+  ['o_occupants', 'Mettre en sécurité les occupants des étages supérieurs'],
+  ['o_propag', 'Éviter la propagation (cage d\'escalier, étages, façade)'],
+  ['o_eteindre', 'Éteindre le feu'],
+  ['o_intervenants', 'Assurer la sécurité des intervenants'],
+  ['o_victimes', 'Prendre en charge les victimes'],
+  ['o_alim', 'Pérenniser l\'alimentation en eau'],
+];
+const IDEES = [
+  ['im_sauv', 'Rechercher et extraire la victime sous protection d\'une LDV', ['RECHERCHE', 'PA_CH1'], 'o_sauver'],
+  ['im_reco', 'Reconnaître l\'intégralité de l\'appartement', ['RECHERCHE', 'ATTAQUE'], 'o_sauver'],
+  ['im_attaque', 'Attaquer le feu par l\'intérieur, LDV 500 par la cage', ['ATTAQUE'], 'o_eteindre'],
+  ['im_porte', 'Maîtriser la porte palière du R+3', ['PALIERE', 'ATTAQUE'], 'o_propag'],
+  ['im_r4', 'Mettre en sécurité les occupants du R+4 (confinement ou échelle)', ['R4', 'PA_R4'], 'o_occupants'],
+  ['im_desenf', 'Désenfumer la cage d\'escalier (exutoire et porte d\'immeuble)', ['EXUTOIRE'], 'o_propag'],
+  ['im_alim', 'Alimenter le FPT sur le PI', ['ALIM'], 'o_alim'],
+  ['im_pec', 'Regrouper et prendre en charge les victimes au pied de l\'immeuble', ['PEC'], 'o_victimes'],
+];
+function startRT() { if (G.phase === 'arrivee') { G.phase = 'rt'; G.rtStart = G.W.t; G.journal.push({ t: G.W.t, text: 'Début du raisonnement tactique.' }); G.dirty = true; } }
+function giveOI(oi) {
+  // oi = { S, A, C, L, obj: [ids], im: [ids], exe: [{ id, mission, opts }] }
+  if (G.oi || G.ended) return null;
+  startRT();
+  const ev = evalOI(oi);
+  G.oi = Object.assign({ t: G.W.t, ev, model: modelOI() }, oi);
+  G.phase = 'conduite';
+  const objTxt = oi.obj.map(k => OBJECTIFS.find(o => o[0] === k)[1].toLowerCase()).join(' ; ');
+  radio('CDG', 'Chefs d\'agrès', `ORDRE INITIAL. Situation : ${oi.S || '—'}. Objectifs : ${objTxt || '—'}.`, 'ordre');
+  for (const e of oi.exe) {
+    const a = G.actors.find(x => x.id === e.id);
+    if (a && e.mission) order(a, e.mission, e.opts || {});
+  }
+  G.lastCorrection = { type: 'oi', t: G.W.t, f: oi, ev, model: G.oi.model };
+  G.journal.push({ t: G.W.t, text: 'Ordre initial donné.' });
+  G.dirty = true;
+  return G.lastCorrection;
+}
+function evalOI(oi) {
+  const out = []; let pts = 0;
+  const ok = (c, good, bad, p) => { out.push({ ok: !!c, text: c ? good : bad }); if (c) pts += p; };
+  const t = G.W.t - T_ARRIVEE;
+  const has = k => oi.obj.includes(k), im = k => oi.im.includes(k);
+  const missions = oi.exe.filter(e => e.mission).map(e => e.mission);
+  ok(t <= 600, `Ordre initial donné ${fmtDur(t)} après l'arrivée.`, `Ordre initial tardif : ${fmtDur(t)} après l'arrivée.`, 10);
+  ok((oi.S || '').length > 15, 'Situation exprimée.', 'Situation non exprimée (où, quoi, contre quoi).', 8);
+  ok((oi.A || '').length > 10, 'Anticipation exprimée.', 'Anticipation absente : que se passe-t-il si je ne fais rien ?', 8);
+  ok(has('o_sauver'), 'Objectif de sauvetage retenu : une personne est en danger au R+3.', 'Une personne âgée est en danger au R+3 : le sauvetage devait être un objectif.', 14);
+  ok(has('o_occupants'), 'Mise en sécurité des étages supérieurs retenue.', 'Le R+4 est menacé par la cage enfumée : objectif de mise en sécurité oublié.', 10);
+  ok(has('o_propag') || has('o_eteindre'), 'Objectif sur le feu retenu.', 'Aucun objectif sur le feu lui-même.', 8);
+  ok(has('o_intervenants'), 'Sécurité des intervenants affichée.', 'Sécurité des intervenants non affichée dans les objectifs.', 6);
+  // chaque idee de manoeuvre doit avoir des moyens
+  const orphans = oi.im.filter(k => { const d = IDEES.find(x => x[0] === k); return !d[2].some(m => missions.includes(m)); });
+  ok(oi.im.length && !orphans.length, 'Chaque idée de manœuvre a des moyens dans l\'exécution.', orphans.length ? `Idées de manœuvre sans moyens : ${orphans.map(k => IDEES.find(x => x[0] === k)[1].toLowerCase()).join(' ; ')}.` : 'Aucune idée de manœuvre exprimée.', 12);
+  // chaque mission doit servir une idee de manoeuvre
+  const loose = oi.exe.filter(e => e.mission && !oi.im.some(k => IDEES.find(x => x[0] === k)[2].includes(e.mission)));
+  ok(!loose.length, 'Toutes les missions découlent d\'une idée de manœuvre.', `Missions sans idée de manœuvre correspondante : ${loose.map(e => MISSIONS[e.mission].label.toLowerCase()).join(' ; ')}.`, 8);
+  ok(im('im_sauv') && (missions.includes('RECHERCHE') || missions.includes('PA_CH1')), 'Moyens engagés au sauvetage.', 'Aucun moyen engagé sur le sauvetage de la victime.', 10);
+  ok(!missions.includes('ATTAQUE') || missions.includes('ALIM') || G.alim, 'Attaque appuyée par une alimentation pérenne.', 'Attaque engagée sur la seule citerne du FPT (6 min à 500 l/min) : alimentation oubliée.', 6);
+  const subs = new Set(oi.exe.filter(e => e.mission).map(e => (G.actors.find(a => a.id === e.id) || {}).engin));
+  ok(subs.size <= 4, `${subs.size} subordonné(s) direct(s) : règle des 4 respectée.`, `${subs.size} subordonnés directs : au-delà de 4, sectorisez ou demandez un chef de colonne.`, 0);
+  ok((oi.C || '').length > 5, 'Commandement précisé.', 'Commandement non précisé (COS, PC, canal).', 0);
+  return { pts: Math.min(100, pts), out, t };
+}
+function modelOI() {
+  const K = G.K.facts;
+  return {
+    S: 'Feu d\'appartement au R+3 d\'un immeuble R+4, séjour embrasé côté rue. Cage d\'escalier enfumée, porte palière restée ouverte. Une personne âgée présumée dans la chambre côté rue, voisin âgé bloqué au R+4.',
+    A: 'Si je ne fais rien : propagation au reste de l\'appartement, enfumage de toute la cage, intoxication de la victime et du voisin du R+4, voire propagation au R+4 par la façade.',
+    O: 'Sauver la personne du R+3 ; mettre en sécurité les occupants du R+4 ; éviter la propagation par la cage ; éteindre ; assurer la sécurité des intervenants ; prendre en charge les victimes ; pérenniser l\'alimentation.',
+    I: 'Recherche et extraction sous protection d\'une LDV ; attaque du foyer par la cage avec maîtrise de la porte palière ; confinement du R+4 ou sauvetage par l\'échelle ; alimentation sur PI ; regroupement des victimes au pied de l\'immeuble.',
+    E: 'FPT 1 : BAT attaque LDV 500 et maîtrise de la porte palière, BAL alimentation sur PI puis recherche et extraction en priorité chambre côté rue. PA 18 : mise en station façade, sauvetage ou mise en sécurité du R+4. VSAV 1 : prise en charge des victimes au pied de l\'immeuble.',
+    C: 'COS : chef de groupe, VLCG au pied de l\'immeuble. Comptes rendus par les chefs d\'agrès sur le canal opérationnel.',
+    L: 'Point de regroupement des victimes au pied de l\'immeuble, demande de SMUR, 1 FPT en renfort.',
+  };
+}
+
+// ===========================================================================
+// SITAC DU JOUEUR (dessinee avec les symboles conventionnels)
+// ===========================================================================
+function sitacAdd(el) { el.t = G.W.t; G.sitacUser.push(el); G.dirty = true; }
+function sitacRemoveNear(x, y) {
+  let best = -1, bd = 1.2;
+  G.sitacUser.forEach((e, i) => { const d = Math.hypot((e.x2 != null ? (e.x + e.x2) / 2 : e.x) - x, (e.y2 != null ? (e.y + e.y2) / 2 : e.y) - y); if (d < bd) { bd = d; best = i; } });
+  if (best >= 0) G.sitacUser.splice(best, 1);
+}
+const RECTS = { SEJ: [0.2, 5.6, 0.2, 4.6], CUI: [5.8, 8.2, 0.2, 4.6], CH1: [8.4, 10.8, 0.2, 4.6], COU: [0.2, 10.8, 4.8, 5.8], CH2: [0.2, 3.8, 6.0, 8.4], SDB: [4.0, 6.0, 6.0, 8.4], CH3: [6.2, 10.8, 6.0, 8.4] };
+const inRoom = (x, y, r) => { const R = RECTS[r]; return x >= R[0] - 0.3 && x <= R[1] + 0.3 && y >= R[2] - 0.3 && y <= R[3] + 0.3; };
+function evalSitac() {
+  const U = G.sitacUser, out = [];
+  const ok = (c, good, bad) => out.push({ ok: !!c, text: c ? good : bad });
+  if (!U.length) return [{ ok: false, text: 'Aucune SITAC dessinée.' }];
+  const end = e => [e.x2 != null ? e.x2 : e.x, e.y2 != null ? e.y2 : e.y];
+  ok(U.some(e => e.k === 'feu' && inRoom(e.x, e.y, 'SEJ')), 'Foyer placé au séjour.', 'Le foyer (séjour) n\'est pas représenté au bon endroit.');
+  ok(U.some(e => e.k === 'victime' && inRoom(e.x, e.y, 'CH1')), 'Victime représentée dans la chambre côté rue.', 'La victime de la chambre côté rue n\'est pas représentée.');
+  ok(U.some(e => e.k === 'attaque' && inRoom(...end(e), 'SEJ')), 'Action d\'attaque dirigée vers le foyer.', 'Pas d\'action d\'attaque dirigée vers le foyer.');
+  ok(U.some(e => e.k === 'sauvetage'), 'Action de sauvetage représentée.', 'Pas d\'action de sauvetage représentée.');
+  ok(U.some(e => e.k === 'eau'), 'Établissement ou alimentation en eau représenté.', 'Alimentation en eau non représentée.');
+  ok(U.some(e => (e.k === 'fumee' || e.k === 'danger') && e.x < 0.3), 'Enfumage ou danger de la cage représenté.', 'L\'enfumage de la cage d\'escalier n\'est pas représenté.');
+  ok(U.some(e => e.k === 'moyen'), 'Moyens représentés.', 'Aucun moyen représenté.');
+  return out;
+}
+
 window.GAME = { newGame, tick, order, availableMissions, MISSIONS, sendMessage, gauges, endGame, debriefData, clock, hhmm, fmtDur,
-  know, vState, ask, observe, availableQuestions, witnessDef, WITNESSES, FIRE_STATES, modelMessage, MISSIONS_LIST: null, snapshotRoom, roomReportText, isOpen, locName, zoneOf, ROOMS, ROOM_NAMES, LEVELS, LEVEL_NAMES, T_ARRIVEE, RENFORTS, radio };
+  know, vState, startRT, giveOI, OBJECTIFS, IDEES, sitacAdd, sitacRemoveNear, evalSitac, ask, observe, availableQuestions, witnessDef, WITNESSES, FIRE_STATES, modelMessage, MISSIONS_LIST: null, snapshotRoom, roomReportText, isOpen, locName, zoneOf, ROOMS, ROOM_NAMES, LEVELS, LEVEL_NAMES, T_ARRIVEE, RENFORTS, radio };
 })();

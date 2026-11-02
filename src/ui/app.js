@@ -32,7 +32,9 @@ function nodeXY(loc) {
   return null;
 }
 function drawPlan(now, ctxArg) {
-  const ctx = ctxArg || pctx, K = G.K;
+  const ctx = ctxArg || pctx;
+  const view = (document.getElementById('st-view') || {}).value || 'both';
+  const K = view === 'user' ? { facts: { layout: true }, rooms: {}, cage: {} } : G.K;
   ctx.clearRect(0, 0, PW, PH);
   ctx.fillStyle = css('--board'); ctx.fillRect(0, 0, PW, PH);
   // trame de fond
@@ -126,7 +128,50 @@ function drawPlan(now, ctxArg) {
   // legende
   const lg = [['--inc', 'Feu'], ['--risk', 'Chaleur'], ['--smoke', 'Fumées'], ['--clear', 'Reconnu, sain'], ['--unknown', 'Non reconnu']];
   lg.forEach(([c, t], i) => { const y = 340 + i * 15; ctx.fillStyle = css(c); ctx.fillRect(CX, y - 9, 12, 10); ctx.fillStyle = css('--ink-soft'); ctx.font = `500 11px ${css('--f-body')}`; ctx.fillText(t, CX + 18, y); });
+  if (view !== 'info') { for (const e of G.sitacUser) drawSym(ctx, e); if (drag && ctx === bigCtx) drawSym(ctx, drag); }
 }
+// ---------------------------------------------------------------- symboles conventionnels de la SITAC
+const SYM_COL = { feu: '--inc', attaque: '--inc', victime: '--pers', sauvetage: '--pers', danger: '--risk', reco: '--cmd', eau: '--eau', fumee: '--smoke-l', moyen: '--cmd' };
+function arrow(ctx, x1, y1, x2, y2, col, w, dash) {
+  ctx.save(); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round';
+  if (dash) ctx.setLineDash([7, 6]);
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); ctx.setLineDash([]);
+  const a = Math.atan2(y2 - y1, x2 - x1), h = 7 + w * 1.6;
+  ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x2 - h * Math.cos(a - 0.45), y2 - h * Math.sin(a - 0.45)); ctx.lineTo(x2 - h * Math.cos(a + 0.45), y2 - h * Math.sin(a + 0.45)); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function drawSym(ctx, e) {
+  const X = px(e.x), Y = py(e.y), col = css(SYM_COL[e.k] || '--cmd');
+  ctx.save();
+  if (e.k === 'feu') {
+    ctx.fillStyle = col; ctx.globalAlpha = 0.9; ctx.beginPath();
+    ctx.moveTo(X, Y - 16); ctx.quadraticCurveTo(X + 13, Y - 2, X + 8, Y + 9); ctx.quadraticCurveTo(X, Y + 13, X - 8, Y + 9); ctx.quadraticCurveTo(X - 13, Y - 2, X, Y - 16); ctx.fill();
+    ctx.fillStyle = '#ffd36b'; ctx.beginPath(); ctx.arc(X, Y + 4, 4, 0, 7); ctx.fill();
+  } else if (e.k === 'fumee') {
+    ctx.fillStyle = col; ctx.globalAlpha = 0.85; for (const [dx, dy, r] of [[-8, 2, 7], [0, -4, 9], [9, 2, 7], [0, 5, 7]]) { ctx.beginPath(); ctx.arc(X + dx, Y + dy, r, 0, 7); ctx.fill(); }
+  } else if (e.k === 'victime') {
+    ctx.fillStyle = col; ctx.strokeStyle = '#0d141c'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(X, Y - 11); ctx.lineTo(X + 10, Y + 7); ctx.lineTo(X - 10, Y + 7); ctx.closePath(); ctx.fill(); ctx.stroke();
+  } else if (e.k === 'danger') {
+    ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(X, Y - 12); ctx.lineTo(X + 11, Y + 8); ctx.lineTo(X - 11, Y + 8); ctx.closePath(); ctx.stroke();
+    ctx.fillStyle = col; ctx.font = `700 12px ${css('--f-mono')}`; ctx.textAlign = 'center'; ctx.fillText('!', X, Y + 5);
+  } else if (e.k === 'moyen') {
+    const t = e.label || 'FPT', w = Math.max(30, t.length * 7 + 10);
+    const c = /VSAV/.test(t) ? css('--pers') : /VLCG|CDC/.test(t) ? css('--cmd') : css('--inc');
+    ctx.fillStyle = 'rgba(13,20,28,0.85)'; ctx.fillRect(X - w / 2, Y - 9, w, 18); ctx.strokeStyle = c; ctx.lineWidth = 2.5; ctx.strokeRect(X - w / 2, Y - 9, w, 18);
+    ctx.fillStyle = '#fff'; ctx.font = `700 10px ${css('--f-mono')}`; ctx.textAlign = 'center'; ctx.fillText(t, X, Y + 4);
+  } else if (e.x2 != null) {
+    const dash = e.k === 'reco', w = e.k === 'eau' ? 2.5 : 4;
+    arrow(ctx, X, Y, px(e.x2), py(e.y2), col, w, dash);
+  }
+  ctx.restore();
+}
+let tool = null, drag = null;
+function planFromEvent(ev) {
+  const c = $('#bigplan'), r = c.getBoundingClientRect();
+  const lx = (ev.clientX - r.left) * PW / r.width, ly = (ev.clientY - r.top) * PH / r.height;
+  return { x: (lx - PX0) / PS, y: (PY0 - ly) / PS };
+}
+const DRAG_TOOLS = ['attaque', 'sauvetage', 'reco', 'eau'];
 function hatch(ctx, x, y, w, h) {
   ctx.save(); ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
   ctx.strokeStyle = css('--hatch'); ctx.lineWidth = 1;
@@ -163,6 +208,9 @@ function renderHUD() {
   const since = W.t - GM.T_ARRIVEE, ch = $('#chrono');
   if (G.ambiance) { ch.textContent = `Ambiance transmise à +${GM.fmtDur(G.ambiance.t - GM.T_ARRIVEE)}`; ch.className = 'chrono done'; }
   else { const r = 300 - since; ch.textContent = r >= 0 ? `Message d'ambiance : ${Math.floor(r / 60)}:${String(Math.floor(r % 60)).padStart(2, '0')}` : `Ambiance en retard : +${Math.floor(-r / 60)}:${String(Math.floor(-r % 60)).padStart(2, '0')}`; ch.className = 'chrono ' + (r < 0 ? 'late' : r < 60 ? 'soon' : ''); }
+  const PHASES = [['arrivee', 'Arrivée · RI'], ['rt', 'Raisonnement tactique'], ['conduite', 'Conduite']];
+  $('#phase').innerHTML = PHASES.map(([k, l]) => `<span class="phz ${k === G.phase ? 'on' : ''}">${l}</span>`).join('');
+  $('#btn-oi').textContent = G.oi ? 'Ordre initial donné' : 'Raisonnement tactique';
   // situation du feu
   const cur = G.fire.cur;
   $('#firestate').innerHTML = GM.FIRE_STATES.map(([k, l]) => `<span class="fs ${k === cur ? 'on ' + k : ''}">${l}</span>`).join('');
@@ -264,6 +312,7 @@ function renderMsgState() {
 }
 function showCorrection(c) {
   if (!c) return;
+  if (c.type === 'oi') return showOICorrection(c);
   const rows = c.type === 'ambiance' ? [['JE SUIS', 'suis'], ['JE VOIS', 'vois'], ['JE PRÉVOIS', 'prevois'], ['JE FAIS', 'fais'], ['JE DEMANDE', 'demande']] : [['JE SUIS', 'suis'], ['JE VOIS', 'vois'], ['VICTIMES', 'victimes'], ['JE FAIS', 'fais'], ['JE DEMANDE', 'demande']];
   const score = c.ev.pts;
   $('#corr-body').innerHTML = `
@@ -276,7 +325,50 @@ function showCorrection(c) {
   if (mode === 'game' && !G.ended) { G.corrPause = true; G.paused = true; }
 }
 
-// ---------------------------------------------------------------- RADIO / CARNET
+function showOICorrection(c) {
+  const f = c.f, lab = (L, ids) => ids.map(k => L.find(x => x[0] === k)[1]).join(' ; ') || '—';
+  const mine = {
+    S: f.S, A: f.A, O: lab(GM.OBJECTIFS, f.obj), I: lab(GM.IDEES, f.im),
+    E: f.exe.filter(e => e.mission).map(e => { const a = G.actors.find(x => x.id === e.id); return `${a ? (a.kind === 'binome' ? a.id.replace(/\d/, '') + ' ' + a.engin : a.engin) : e.id} : ${GM.MISSIONS[e.mission].label.toLowerCase()}`; }).join(' ; ') || '—',
+    C: f.C, L: f.L,
+  };
+  const rows = [['S', 'Situation'], ['A', 'Anticipation'], ['O', 'Objectifs'], ['I', 'Idées de manœuvre'], ['E', 'Exécution'], ['C', 'Commandement'], ['L', 'Logistique']];
+  $('#corr-body').innerHTML = `
+    <p class="lead">Ordre initial donné à ${GM.hhmm(c.t)}. Réussite : <b>${Math.round(c.ev.pts)} %</b></p>
+    <ul class="pts">${c.ev.out.map(o => `<li class="${o.ok ? 'ok' : 'ko'}">${esc(o.text)}</li>`).join('')}</ul>
+    <div class="cmp"><div class="cmph"><span>Votre ordre initial</span><span>Ordre initial type</span></div>
+    ${rows.map(([k, l]) => `<div class="cmpr"><b>${l}</b><div>${esc(mine[k] || '—')}</div><div>${esc(c.model[k] || '—')}</div></div>`).join('')}</div>`;
+  $('#corr').hidden = false;
+  if (mode === 'game' && !G.ended) { G.corrPause = true; G.paused = true; }
+}
+// ---------------------------------------------------------------- RAISONNEMENT TACTIQUE / ORDRE INITIAL
+function exeOptions(a) {
+  const opts = ['<option value="">— pas de mission —</option>'];
+  for (const k of GM.availableMissions(a)) {
+    const l = GM.MISSIONS[k].label;
+    if (k === 'ATTAQUE') { opts.push(`<option value="ATTAQUE|LDV 500">${l} (LDV 500)</option>`, `<option value="ATTAQUE|LDV 250">${l} (LDV 250)</option>`); }
+    else if (k === 'RECHERCHE') { opts.push(`<option value="RECHERCHE|">${l}</option>`); if (G.K.facts.victime_lieu) opts.push(`<option value="RECHERCHE|CH1">${l}, priorité chambre côté rue</option>`); }
+    else if (k !== 'REPLI') opts.push(`<option value="${k}|">${l}</option>`);
+  }
+  return opts.join('');
+}
+function openOI() {
+  if (mode !== 'game' || G.ended) return;
+  if (G.oi) { showCorrection(Object.assign({ type: 'oi' }, G.lastCorrection && G.lastCorrection.type === 'oi' ? G.lastCorrection : { t: G.oi.t, f: G.oi, ev: G.oi.ev, model: G.oi.model })); return; }
+  GM.startRT();
+  if (!$('#oi-obj').children.length) {
+    $('#oi-obj').innerHTML = GM.OBJECTIFS.map(([k, l]) => `<label><input type="checkbox" name="obj" value="${k}" id="obj-${k}"> ${esc(l)}</label>`).join('');
+    $('#oi-im').innerHTML = GM.IDEES.map(([k, l]) => `<label><input type="checkbox" name="im" value="${k}" id="im-${k}"> ${esc(l)}</label>`).join('');
+  }
+  const keep = {}; document.querySelectorAll('#oi-exe select').forEach(x => keep[x.id] = x.value);
+  $('#oi-exe').innerHTML = G.actors.filter(a => a.loc !== 'ABSENT').map(a => {
+    const col = S3.TEAM_COLORS[a.id] || 'var(--cmd)';
+    const who = a.kind === 'binome' ? `<span class="tag" style="--tc:${col}">${a.id.replace(/\d/, '')}</span> ${esc(a.engin)} — ${esc(a.label.toLowerCase())}` : `<span class="tag" style="--tc:var(--cmd)">${esc(a.engin)}</span> chef d'agrès`;
+    return `<div class="exe"><div class="who">${who}</div><select id="exe-${a.id}" aria-label="Mission ${esc(a.engin)}">${exeOptions(a)}</select><span class="hint">${esc(a.mission ? 'en cours : ' + GM.MISSIONS[a.mission].label.toLowerCase() : 'disponible')}</span></div>`;
+  }).join('') + (G.actors.some(a => a.loc === 'ABSENT') ? `<p class="hint">En route : ${G.actors.filter(a => a.loc === 'ABSENT').map(a => a.engin).join(', ')}.</p>` : '');
+  for (const id in keep) { const el = document.getElementById(id); if (el) el.value = keep[id]; }
+  $('#oiwin').hidden = false;
+}
 function renderRadio() {
   const rows = G.radio.slice().reverse().map(m => `<tr class="${m.kind}"><td>${m.n}</td><td>${GM.hhmm(m.t)}</td><td>${esc(m.from)}</td><td>${esc(m.to)}</td><td>${esc(m.text)}</td></tr>`).join('');
   $('#radio').innerHTML = `<div class="tablewrap"><table><thead><tr><th>N°</th><th>GH</th><th>Origine</th><th>Dest.</th><th>Contenu</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -376,6 +468,34 @@ function bind() {
     showCorrection(c.dataset.corr === 'amb' ? Object.assign({ type: 'ambiance' }, G.ambiance) : Object.assign({ type: 'cr', n: G.crs.length }, G.crs[G.crs.length - 1]));
   });
   $('#plan').addEventListener('click', openBig);
+  $('#btn-oi').addEventListener('click', openOI);
+  $('#oi-close').addEventListener('click', () => { $('#oiwin').hidden = true; });
+  $('#form-oi').addEventListener('submit', e => {
+    e.preventDefault(); if (G.ended || G.oi) return;
+    const f = new FormData(e.target);
+    const exe = G.actors.filter(a => a.loc !== 'ABSENT').map(a => { const v = (document.getElementById('exe-' + a.id) || {}).value || ''; const [m, o] = v.split('|'); return { id: a.id, mission: m || null, opts: m === 'ATTAQUE' ? { lance: o } : m === 'RECHERCHE' && o ? { priority: o } : {} }; });
+    const c = GM.giveOI({ S: f.get('S') || '', A: f.get('A') || '', C: f.get('C') || '', L: f.get('L') || '', obj: f.getAll('obj'), im: f.getAll('im'), exe });
+    $('#oiwin').hidden = true; if (c) showCorrection(c);
+  });
+  document.querySelectorAll('.st').forEach(b => b.addEventListener('click', () => {
+    tool = tool === b.dataset.t ? null : b.dataset.t;
+    document.querySelectorAll('.st').forEach(x => x.setAttribute('aria-pressed', x.dataset.t === tool));
+  }));
+  $('#st-view').addEventListener('change', () => { drawPlan(performance.now(), bigCtx); });
+  const bp = $('#bigplan');
+  bp.addEventListener('pointerdown', ev => {
+    if (!tool || mode !== 'game') return;
+    const p = planFromEvent(ev);
+    if (tool === 'gomme') { GM.sitacRemoveNear(p.x, p.y); drawPlan(performance.now(), bigCtx); return; }
+    if (DRAG_TOOLS.includes(tool)) { drag = { k: tool, x: p.x, y: p.y, x2: p.x, y2: p.y }; bp.setPointerCapture(ev.pointerId); }
+    else { GM.sitacAdd({ k: tool, x: p.x, y: p.y, label: tool === 'moyen' ? $('#st-moyen').value : undefined }); drawPlan(performance.now(), bigCtx); }
+  });
+  bp.addEventListener('pointermove', ev => { if (!drag) return; const p = planFromEvent(ev); drag.x2 = p.x; drag.y2 = p.y; drawPlan(performance.now(), bigCtx); });
+  bp.addEventListener('pointerup', () => {
+    if (!drag) return;
+    if (Math.hypot(drag.x2 - drag.x, drag.y2 - drag.y) > 0.4) GM.sitacAdd(drag);
+    drag = null; drawPlan(performance.now(), bigCtx);
+  });
   $('#sitac-close').addEventListener('click', () => { $('#sitacbig').hidden = true; });
   $('#corr-close').addEventListener('click', () => { $('#corr').hidden = true; if (G.corrPause && !G.ended) { G.corrPause = false; G.paused = false; } });
   $('#btn-fin').addEventListener('click', () => { if (mode === 'game') GM.endGame('Fin d\'intervention déclarée par le COS'); });
@@ -388,7 +508,7 @@ function bind() {
   $('#btn-start').addEventListener('click', startGame);
   $('#btn-back').addEventListener('click', () => { $('#intro').hidden = true; $('#home').hidden = false; });
   $('#btn-restart').addEventListener('click', () => { $('#debrief').hidden = true; goHome(); });
-  window.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenu(); $('#sitacbig').hidden = true; } });
+  window.addEventListener('keydown', e => { if (e.key === 'Escape') { closeMenu(); $('#sitacbig').hidden = true; $('#oiwin').hidden = true; } });
 }
 function openTab(id) {
   $('#panel').classList.remove('closed');
@@ -422,8 +542,9 @@ function goHome() {
   S3.autoRotate(true); S3.view('aerien');
 }
 function startGame() {
-  GM.newGame(); G.started = true; G.speed = 1; resetUI();
-  document.querySelectorAll('.spd').forEach(x => x.setAttribute('aria-pressed', x.dataset.s === '1'));
+  GM.newGame(); G.started = true; G.speed = 0.5; resetUI();
+  document.querySelectorAll('.spd').forEach(x => x.setAttribute('aria-pressed', x.dataset.s === '0.5'));
+  $('#oi-obj').innerHTML = ''; $('#form-oi').reset();
   mode = 'game'; document.body.classList.remove('home');
   $('#intro').hidden = true; S3.autoRotate(false); S3.view('rue');
   UI.toast('Vous arrivez sur les lieux. Le CA du FPT 1 vous attend au pied de l\'immeuble.', 'cr');
