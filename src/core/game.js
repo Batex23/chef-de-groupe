@@ -197,7 +197,7 @@ const MISSIONS = {
   ALIM: { label: 'Alimenter le FPT sur le PI (80 m)', who: ['binome'] },
   ATTAQUE_R4: { label: 'Attaque du feu au R+4 (LDV par la cage)', who: ['binome'] },
   DEBLAI: { label: 'Déblai et dégarnissage des pièces sinistrées (noyage des foyers résiduels)', who: ['binome'] },
-  CONTROLE: { label: 'Contrôle à la caméra thermique (points chauds)', who: ['binome'] },
+  CONTROLE: { label: 'Reconnaissance à la caméra thermique (foyer, victimes, points chauds)', who: ['binome'] },
   VPP: { label: 'Ventilation opérationnelle : VPP à la porte d\'immeuble', who: ['binome'] },
   REPLI: { label: 'Repli au pied de l\'immeuble', who: ['binome'] },
   PA_R4: { label: 'Mise en station, sauvetage du voisin du R+4 par la façade', who: ['echelle'] },
@@ -217,7 +217,6 @@ function availableMissions(a) {
     if (k === 'PEC' && a.pec) continue;
     if (k === 'ATTAQUE_R4' && !(G.r4.t0 != null && !G.r4.out)) continue;
     if (k === 'DEBLAI' && !(G.W.smoulder.length || G.W.fires.some(f => f.out) || G.r4.out)) continue;
-    if (k === 'CONTROLE' && !G.W.fires.some(f => f.out)) continue;
     if (k === 'VPP' && (G.W.vpp || G.vppPlanned)) continue;
     list.push(k);
   }
@@ -327,7 +326,7 @@ function snapshotRoom(r) {
   const T = z.Tu - 273;
   let heat = T > 400 ? 'chaleur extrême' : T > 200 ? 'forte chaleur' : T > 80 ? 'chaleur sensible' : 'pas de chaleur notable';
   const onFire = roomOnFire(G.W, r);
-  const resid = hasResidual(G.W, r);
+  const resid = hasResidual(G.W, r, true);
   const rep = G.W.fires.some(f => f.zone === r && !f.out && f.kind === 'reprise');
   const fire = onFire ? (rep ? 'reprise de feu sous les débris' : z.flashed ? 'embrasement généralisé' : 'feu en cours') : resid ? 'flammes abattues, foyers résiduels sous les débris' : (G.W.fires.some(f => f.zone === r) ? 'feu éteint, déblayé' : '');
   const v = G.victims.find(v => v.loc === r && !v.atRue && !v.carried);
@@ -509,7 +508,7 @@ function doDeblai(a, s, dt) {
   const W = G.W;
   a.effort = 1.5;
   const flames = ROOMS.filter(r => hasFire(W, r));
-  const target = W.smoulder.find(x => !x.done && !roomOnFire(W, x.zone));
+  const target = W.smoulder.find(x => !x.done && (x.visible || x.found) && !roomOnFire(W, x.zone));
   if (!target && G.r4.out && !G.r4.deblaye) {
     if (a.loc !== 'R4_APT') { a.plan.unshift({ type: 'move', to: 'R4_APT' }); return; }
     if (!waterOK()) { a.flowing = false; a.status = 'Déblai : lance à sec'; return; }
@@ -521,7 +520,7 @@ function doDeblai(a, s, dt) {
   if (!target) {
     if (flames.length) { a.status = `Déblai en attente : feu encore actif (${flames.map(r => ROOM_NAMES[r]).join(', ')})`; a.flowing = false; return; }
     a.plan.shift(); a.flowing = false;
-    report(a, s.n ? `Déblai terminé (${s.n} volume(s)). Plus de foyer apparent.` : 'Pas de foyer résiduel trouvé.');
+    report(a, s.n ? `Déblai terminé (${s.n} foyer(s)). Plus de foyer apparent à l'œil nu.` : 'Pas de foyer résiduel apparent.');
     G.dirty = true; return;
   }
   if (a.loc !== target.zone) { a.plan.unshift({ type: 'move', to: target.zone }); return; }
@@ -533,27 +532,43 @@ function doDeblai(a, s, dt) {
   if (s.t >= s.d) {
     target.done = true; target.deblaye = true; s.n = (s.n || 0) + 1; s.cur = null;
     G.K.rooms[target.zone] = snapshotRoom(target.zone);
-    report(a, `Déblai terminé : ${ROOM_NAMES[target.zone]}, débris noyés et dégarnis.`);
+    report(a, target.visible ? `Déblai terminé : ${ROOM_NAMES[target.zone]}, débris noyés et dégarnis.` : `Point chaud traité : ${target.where} ouvert(e) à la hache et noyé(e).`);
     G.dirty = true;
   }
 }
 function doControle(a, s, dt) {
+  // Reconnaissance a la camera thermique : localise le foyer a travers les fumees, repere les victimes,
+  // et revele les points chauds caches (cloisons, doublages, faux plafonds) invisibles a l'oeil.
   const W = G.W;
-  if (!s.list) { s.list = burntRooms().concat(['COU']).filter((r, i, l) => l.indexOf(r) === i); s.i = 0; s.t = 0; s.hot = []; }
+  if (!s.list) { s.list = ['COU', 'SEJ', 'CUI', 'CH1', 'CH2', 'SDB', 'CH3']; s.i = 0; s.t = 0; s.hot = []; s.seen = []; }
   if (s.i >= s.list.length) {
     a.plan.shift();
     const flames = ROOMS.some(r => roomOnFire(W, r));
-    if (!s.hot.length && !flames && (G.r4.t0 == null || G.r4.deblaye)) { G.controle = W.t; report(a, 'Contrôle à la caméra thermique terminé : aucun point chaud, pas de propagation dans les cloisons ni au plafond.'); }
-    else report(a, `Contrôle à la caméra thermique : points chauds dans ${s.hot.map(r => ROOM_NAMES[r]).join(', ') || 'le logement'}. Déblai à poursuivre.`);
+    if (!flames && !hasResidual(W) && (G.r4.t0 == null || G.r4.deblaye)) { G.controle = W.t; report(a, 'Reconnaissance à la caméra thermique terminée : aucun point chaud, ni dans les débris, ni dans les cloisons, ni au plafond.'); }
+    else report(a, `Caméra thermique : ${[s.seen.length ? 'feu actif : ' + s.seen.join(', ') : '', s.hot.length ? 'points chauds : ' + s.hot.join(' ; ') : ''].filter(Boolean).join(' — ') || 'rien de plus'}.${s.hot.length ? ' Déblai à faire sur ces points.' : ''}`);
     G.dirty = true; return;
   }
   const r = s.list[s.i];
+  if (roomOnFire(W, r)) {
+    // on ne rentre pas sans lance dans un volume en feu : lecture depuis le seuil
+    if (a.loc !== 'COU' && r !== 'COU') { a.plan.unshift({ type: 'move', to: 'COU' }); return; }
+    s.seen.push(ROOM_NAMES[r]); know(r === 'SEJ' ? 'feu_sejour' : 'feu_' + r, `Foyer localisé à la caméra thermique : ${ROOM_NAMES[r]}`);
+    G.K.rooms[r] = snapshotRoom(r); s.i++; return;
+  }
   if (a.loc !== r) { a.plan.unshift({ type: 'move', to: r }); return; }
   a.status = `Caméra thermique : ${ROOM_NAMES[r]}`;
   s.t += dt;
-  if (s.t >= 30) {
+  if (s.t >= 25) {
     s.t = 0; s.i++;
-    if (hasResidual(W, r) || roomOnFire(W, r)) { s.hot.push(r); know('points_chauds', 'Points chauds persistants dans les pièces sinistrées'); }
+    G.K.rooms[r] = snapshotRoom(r); know('layout', 'Disposition de l\'appartement');
+    for (const sm of W.smoulder.filter(x => !x.done && x.zone === r)) {
+      if (!sm.visible && !sm.found) { sm.found = true; G.journal.push({ t: W.t, text: `Point chaud caché détecté à la caméra thermique dans ${sm.where}.` }); }
+      s.hot.push(`${sm.where} (${ROOM_NAMES[r].toLowerCase()}, ${sm.visible ? 'braises' : 'environ ' + Math.round(140 + sm.mj / 3) + ' °C derrière le parement'})`);
+      know('points_chauds', 'Points chauds repérés à la caméra thermique');
+    }
+    const v = G.victims.find(x => x.loc === r && !x.atRue && !x.carried && !x.found);
+    if (v) { v.found = true; report(a, `Silhouette chaude au sol dans ${ROOM_NAMES[r].toLowerCase()} : victime découverte, ${vState(v).s.toLowerCase()}. J'extrais.`); a.plan.unshift({ type: 'carry', v }); }
+    G.dirty = true;
   }
 }
 function startVPP(a) {
@@ -695,7 +710,8 @@ function onSimEvent(e) {
   }
   if (e.type === 'reprise') {
     G.fire.lastEvt = e.t; G.controle = null; G.reprises++;
-    G.journal.push({ t: e.t, text: `Reprise de feu : ${ROOM_NAMES[e.id] || e.id} (foyer résiduel non déblayé).` });
+    const src = G.W.smoulder.find(x => x.reprise && x.zone === e.id && x.done && Math.abs(G.W.t - e.t) < 1);
+    G.journal.push({ t: e.t, text: `Reprise de feu : ${ROOM_NAMES[e.id] || e.id} (${src && !src.visible ? 'foyer caché dans ' + src.where + ', non détecté' : 'foyer résiduel non déblayé'}).` });
     const here = G.actors.find(a => a.kind === 'binome' && a.loc === e.id);
     if (here) report(here, `Reprise de feu dans ${ROOM_NAMES[e.id].toLowerCase()} ! Les braises sous les débris sont reparties.`);
     else if (G.W.O.some(o => o.a === e.id && o.b === 'EXT' && o.open)) radio('CA FPT 1', 'CDG', `Lueurs et fumées qui reprennent au R+3 (${ROOM_NAMES[e.id].toLowerCase()}) !`, 'alerte');
@@ -814,7 +830,11 @@ function debriefData() {
   pts.push({ ok: !isOpen('PALIERE') || !ROOMS.some(r => roomOnFire(G.W, r)), text: isOpen('PALIERE') ? 'La porte palière est restée ouverte pendant le feu : la cage s\'est enfumée.' : 'Porte palière maîtrisée.' });
   const burnt = burntRooms();
   if (W.fires.some(f => f.out)) {
-    const left = burnt.filter(r => hasResidual(W, r) || hasFire(W, r)).map(r => ROOM_NAMES[r]);
+    const left = burnt.filter(r => hasResidual(W, r, true) || hasFire(W, r)).map(r => ROOM_NAMES[r]);
+    const hidden = W.smoulder.filter(x => !x.visible && !x.done && !x.found);
+    const hiddenRep = W.smoulder.filter(x => !x.visible && x.reprise);
+    if (hidden.length || hiddenRep.length) pts.push({ ok: false, text: `Point(s) chaud(s) caché(s) non détecté(s) (${[...hidden, ...hiddenRep].map(x => x.where).join(', ')}) : il fallait une reconnaissance à la caméra thermique après le déblai.` });
+    else if (W.smoulder.some(x => !x.visible)) pts.push({ ok: true, text: 'Points chauds cachés détectés à la caméra thermique et traités.' });
     pts.push({ ok: !left.length, text: left.length ? `Feu ou foyers résiduels encore présents en fin d'exercice : ${left.join(', ')}.` : 'Déblai des pièces sinistrées réalisé.' });
     pts.push({ ok: !!G.controle, text: G.controle ? `Contrôle à la caméra thermique effectué à ${hhmm(G.controle)}.` : 'Pas de contrôle à la caméra thermique avant la fin : le feu ne pouvait pas être déclaré éteint.' });
   }
@@ -1004,6 +1024,7 @@ const IDEES = [
   ['im_r4', 'Mettre en sécurité les occupants du R+4 (confinement ou échelle)', ['R4', 'PA_R4'], 'o_occupants'],
   ['im_desenf', 'Désenfumer la cage d\'escalier (exutoire et porte d\'immeuble)', ['EXUTOIRE'], 'o_propag'],
   ['im_alim', 'Alimenter le FPT sur le PI', ['ALIM'], 'o_alim'],
+  ['im_ct', 'Reconnaître à la caméra thermique (foyer, victimes, points chauds)', ['CONTROLE', 'RECHERCHE'], 'o_sauver'],
   ['im_pec', 'Regrouper et prendre en charge les victimes au pied de l\'immeuble', ['PEC'], 'o_victimes'],
 ];
 function startRT() { if (G.phase === 'arrivee') { G.phase = 'rt'; G.rtStart = G.W.t; G.journal.push({ t: G.W.t, text: 'Début du raisonnement tactique.' }); G.dirty = true; } }

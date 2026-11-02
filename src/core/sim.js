@@ -79,7 +79,10 @@ function createWorld() {
     // canape du sejour : t2 rapide, pic 3 MW, ~ 500 MJ
     { zone: 'SEJ', t0: 0, alpha: 0.047, peak: 3000, energy: 1200, burned: 0, k: 1, base: 0.4, out: false, kind: 'canape' },
   ];
-  return { t: 0, Z, O, fires, smoulder: [], vpp: false, events: [], log: [], flags: {}, water: {}, ext: {} };
+  // foyers caches (doublages, cloisons, faux plafonds) : invisibles a l'oeil, detectables a la camera thermique
+  const pockets = { SEJ: ['CUI', 'la cloison séjour / cuisine'], CUI: ['CH1', 'la cloison cuisine / chambre 1'], COU: ['COU', 'le faux plafond du couloir'],
+    CH1: ['CH1', 'le doublage de la façade'], CH2: ['COU', 'le faux plafond du couloir'], CH3: ['CH3', 'le doublage de la façade'], SDB: ['COU', 'la gaine technique'] };
+  return { t: 0, Z, O, fires, smoulder: [], pockets, vpp: false, events: [], log: [], flags: {}, water: {}, ext: {} };
 }
 
 // interface de couche (altitude absolue)
@@ -234,8 +237,8 @@ function step(W) {
     const mf = q / CFG.dHc;
     a.mIn += mf * 4; a.eIn += q * 0.7 + mf * 3 * CFG.cp * z.Tu;
     a.CO += mf * 0.35; a.So += mf * 0.12;
-    if ((W.water[sm.zone] || 0) > 0) sm.lastWater = W.t;     // l'arrosage retarde la reprise sans la supprimer
-    const O2ok = z.YO2L > 0.17;
+    if ((W.water[sm.zone] || 0) > 0 && (sm.visible || sm.found)) sm.lastWater = W.t;  // l'arrosage retarde la reprise ; il n'atteint pas un foyer cache
+    const O2ok = z.YO2L > (sm.visible ? 0.15 : 0.12);   // un foyer cache couve dans la paroi et perce plus tard
     if (O2ok && W.t - sm.lastWater > sm.delay && sm.mj > 40) {
       sm.done = true; sm.reprise = true;
       W.fires.push({ zone: sm.zone, t0: W.t, alpha: 0.02, peak: Math.min(1800, 110 * z.A), energy: sm.mj, burned: 0, k: 1, base: 0.3, out: false, kind: 'reprise' });
@@ -338,8 +341,15 @@ function step(W) {
           const prev = W.smoulder.find(x => x.zone === f.zone && !x.done);
           const seed = ((f.zone.charCodeAt(0) * 7 + f.zone.charCodeAt(1) * 13 + W.smoulder.length * 5) % 17) / 17;
           const cap = 15 * Z[f.zone].A;   // braises et debris : quelques dizaines de MJ par m2 au plus
-          if (prev) prev.mj = Math.min(cap, prev.mj + rem * 0.6);
-          else W.smoulder.push({ zone: f.zone, mj: Math.min(cap, rem * 0.6), t: W.t, lastWater: W.t, delay: CFG.repriseMin + seed * CFG.repriseVar, seed, done: false });
+          const prev2 = W.smoulder.find(x => x.zone === f.zone && !x.done && x.visible);
+          if (prev2) prev2.mj = Math.min(cap, prev2.mj + rem * 0.6);
+          else W.smoulder.push({ zone: f.zone, mj: Math.min(cap, rem * 0.6), t: W.t, lastWater: W.t, delay: CFG.repriseMin + seed * CFG.repriseVar, seed, done: false, visible: true, where: 'les débris' });
+          // un volume embrase laisse un foyer cache (cloison, doublage, faux plafond)
+          const pk = W.pockets && W.pockets[f.zone];
+          if (pk && (Z[f.zone].flashed || f.burned > 300) && !W.smoulder.some(x => x.src === f.zone && !x.visible)) {
+            W.smoulder.push({ zone: pk[0], src: f.zone, where: pk[1], mj: Math.min(6 * Z[pk[0]].A + 60, rem * 0.25 + 60), t: W.t, lastWater: W.t,
+              delay: CFG.repriseMin + 900 + (1 - seed) * CFG.repriseVar, seed: 1 - seed, done: false, visible: false, found: false });
+          }
         }
       }
     }
@@ -356,7 +366,7 @@ function thomasQ(W, z) {
   }
   return 7.8 * AT + 378 * s;
 }
-function hasResidual(W, zid) { return W.smoulder.some(s => !s.done && (!zid || s.zone === zid)); }
+function hasResidual(W, zid, seenOnly) { return W.smoulder.some(s => !s.done && (!zid || s.zone === zid) && (!seenOnly || s.visible || s.found)); }
 function hasFire(W, zid) { return W.fires.some(f => f.zone === zid && !f.out); }
 function roomOnFire(W, zid) { return W.fires.some(f => f.zone === zid && !f.out && (f.lastQ || 0) > 50); }
 
