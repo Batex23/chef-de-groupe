@@ -101,10 +101,22 @@
       <label class="f">CANAL<select name="canal" id="c-canal"><option value="GRP 269">GRP 269 · OPE1 GTC</option><option value="GRP 275" selected>GRP 275 · CDT (commandement)</option></select></label>
       <button class="send" type="submit">Transmettre au CODIS</button>
     </form>
+    <div id="pds-wrap" hidden>
+    <hr class="sep">
+    <div class="mhead"><h3>Point de situation au chef de colonne</h3><span class="hint">À la voix, au VLCG, avant qu'il prenne le COS</span></div>
+    <form id="form-pds" autocomplete="off">
+      <label class="f">SITUATION<textarea name="vois" id="p-vois" rows="2" placeholder="Nature, ampleur, évolution…"></textarea></label>
+      <label class="f">RISQUES ET ANTICIPATION<textarea name="prevois" id="p-prevois" rows="2" placeholder="Ce qui menace, ce qui va arriver…"></textarea></label>
+      <label class="f">VICTIMES ET IMPLIQUÉS<textarea name="victimes" id="p-vict" rows="2"></textarea></label>
+      <label class="f">ACTIONS ENGAGÉES<textarea name="fais" id="p-fais" rows="2" placeholder="Qui fait quoi, où…"></textarea></label>
+      <label class="f">MOYENS ET BESOINS<input type="text" name="demande" id="p-dem" placeholder="Moyens sur place, renforts demandés, besoins…"></label>
+      <button class="send" type="submit">Faire le point au chef de colonne</button>
+    </form>
+    </div>
     <hr class="sep">
     <div class="mhead"><h3>Message urgent</h3><span class="hint">Détresse, accident, besoin immédiat</span></div>
     <form id="form-urg" autocomplete="off">
-      <label class="f">MESSAGE<textarea name="txt" id="u-txt" rows="2" placeholder="Ex. : sapeur-pompier en détresse au R+3, demande SMUR et VSAV"></textarea></label>
+      <label class="f">MESSAGE<textarea name="txt" id="u-txt" rows="2" placeholder="Ex. : sapeur-pompier blessé, demande SMUR et VSAV"></textarea></label>
       <label class="f">CANAL<select name="canal" id="u-canal"><option value="GRP 269">GRP 269 · OPE1 GTC</option><option value="GRP 275" selected>GRP 275 · CDT (commandement)</option></select></label>
       <button class="send urg" type="submit">Message urgent au CODIS</button>
     </form>
@@ -125,7 +137,7 @@
     <section class="sect"><h2>Interventions</h2>
       <div class="scen">
         <div class="sc"><b>Feu d'appartement R+3</b><span>Mérignac · nuit · 1 victime présumée · FPT, PA 18, VSAV</span><button class="play" data-play="r3">Jouer</button></div>
-        <div class="sc locked"><b>Feu de pizzeria</b><span>D'après l'exercice ENSOSP GOC 4001 · chef de groupe puis chef de colonne</span><em class="soon">À venir</em></div>
+        <div class="sc"><b>Feu de pizzeria</b><span>Kaysersberg · fin de journée · 900 m², 34 évacués, 1 brûlé grave, station-service et HLM menacés · G INC, puis chef de colonne</span><button class="play" data-play="pizzeria">Jouer</button></div>
         <div class="sc locked"><b>Accident PL / TER</b><span>Passage à niveau, citerne fuyarde, incarcéré</span><em class="soon">À venir</em></div>
         <div class="sc locked"><b>Odeur de gaz en résidence</b><span>Travaux de voirie, évacuation, RCH en renfort</span><em class="soon">À venir</em></div>
       </div>
@@ -230,9 +242,13 @@
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
 } }
 </script>
+<script>window.SCEN = /[?&]s=pizzeria\b/.test(location.search) ? 'pizzeria' : 'r3';</script>
 <script src="src/core/sim.js"></script>
-<script src="src/core/game.js"></script>
-<script type="module" src="src/render/scene.js"></script>
+<script>
+  // chaque intervention a sa logique et sa scene ; l'interface est commune
+  document.write(window.SCEN === 'pizzeria' ? '<script src="src/scenarios/pizzeria/game.js"><\/script>' : '<script src="src/core/game.js"><\/script>');
+  document.write('<script type="module" src="src/render/' + (window.SCEN === 'pizzeria' ? 'scene_pizzeria.js' : 'scene.js') + '"><\/script>');
+</script>
 <script src="src/ui/app.js"></script>
 </body>
 </html>

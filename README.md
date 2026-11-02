@@ -8,6 +8,19 @@ Le jeu tourne entièrement dans le navigateur : rien à installer, ce qui permet
 
 ## Ce qui existe aujourd'hui
 
+Deux interventions :
+
+- **Feu d'appartement R+3**, Mérignac, de nuit (détails ci-dessous).
+- **Feu de pizzeria**, Kaysersberg, d'après l'exercice ENSOSP GOC 4001. Il se joue en chef de groupe incendie :
+  - restaurant de plain-pied de 900 m² ;
+  - 34 évacués au bord de la RN, dont un brûlé grave ;
+  - stock d'une quarantaine de bouteilles de gaz à 9 m, HLM R+3 sous le vent ;
+  - poteau incendie limité à 1000 L/min, aspiration possible sur la Weisbach ;
+  - injects : le vent forcit, les locataires du HLM affluent, pollution de la Weiss, effondrement du mur nord ;
+  - arrivée du chef de colonne, point de situation, puis le joueur devient chef du secteur incendie.
+
+  Adresse directe : `?s=pizzeria`.
+
 - Scénario « Feu d'appartement R+3 », Mérignac, de nuit : 1 FPT, 1 PA 18, 1 VSAV et le chef de groupe (doctrine de référence SDIS 33).
 - Moteur feu en temps réel, calculé pièce par pièce : couche de fumée, température, O₂ et CO, embrasement, bris des vitrages, effet de l'eau, dose toxique des victimes. Il est calé sur des calculs FDS (voir `fds/`).
 - Scène 3D : bâtiments construits avec un kit de façade (murs épais, fenêtres en creux, volets, balcons), vue en coupe du niveau sinistré qui se dévoile au fil des reconnaissances, fumées et flammes pilotées par le moteur.
@@ -47,7 +60,9 @@ Il faut passer par un petit serveur : les modules JavaScript ne se chargent pas 
 ```
 index.html              page unique (accueil, jeu, écrans)
 src/core/sim.js         moteur feu par zones (sans dépendance, réutilisable côté serveur)
-src/core/game.js        logique d'intervention : engins, binômes, victimes, témoins, messages, évaluation
+src/core/game.js        logique du feu d'appartement R+3 : engins, binômes, victimes, témoins, messages, évaluation
+src/scenarios/pizzeria/ logique du feu de pizzeria (même interface que game.js)
+src/render/scene_pizzeria.js scène 3D de la pizzeria
 src/render/scene.js     scène 3D (Three.js r169) : caméra, lumières, engins, personnages, fumées
 src/render/building.js  kit de façade modulaire
 src/render/materials.js matériaux procéduraux (enduit, béton, pierre, brique, enrobé…)
