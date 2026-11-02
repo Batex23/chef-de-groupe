@@ -40,11 +40,18 @@
   <button class="btn" data-view="coupe" aria-pressed="false">Coupe du R+3</button>
 </div>
 
+<section id="suivi" aria-label="Suivi des engagements">
+  <div class="suh"><b>Suivi des engagements</b><span>contrôle ARI · DIR 654</span></div>
+  <div id="suivi-list"></div>
+</section>
+<div id="alerte" hidden role="alert"></div>
+
 <div class="side">
+  <div id="victs"></div>
   <div id="tankhud" class="tank"></div>
   <div id="gauges"></div>
 </div>
-<div class="help">Clic : sélectionner un engin, un binôme, une fenêtre ou un témoin · Glisser : tourner · Molette : zoom · Clic droit : déplacer</div>
+<div class="help">Clic : engin, binôme, fenêtre ou témoin · Glisser : tourner · Molette : zoom · Clic droit : déplacer la vue</div>
 
 <aside id="panel">
   <div class="tabs" role="tablist">
@@ -72,6 +79,7 @@
         <label><input type="checkbox" name="renf" value="ENEDIS" id="a-r6"> ENEDIS</label>
       </div>
       <label class="chk"><input type="checkbox" name="cos" id="a-cos"> Je prends le COS</label>
+      <label class="f">CANAL<select name="canal" id="a-canal"><option value="GRP 269">GRP 269 · OPE1 GTC</option><option value="GRP 275">GRP 275 · CDT (commandement)</option></select></label>
       <button class="send" type="submit">Transmettre au CODIS</button>
     </form>
     <hr class="sep">
@@ -90,7 +98,15 @@
         <label><input type="checkbox" name="renf" value="POLICE" id="c-r5"> Police</label>
         <label><input type="checkbox" name="renf" value="ENEDIS" id="c-r6"> ENEDIS</label>
       </div>
+      <label class="f">CANAL<select name="canal" id="c-canal"><option value="GRP 269">GRP 269 · OPE1 GTC</option><option value="GRP 275" selected>GRP 275 · CDT (commandement)</option></select></label>
       <button class="send" type="submit">Transmettre au CODIS</button>
+    </form>
+    <hr class="sep">
+    <div class="mhead"><h3>Message urgent</h3><span class="hint">Détresse, accident, besoin immédiat</span></div>
+    <form id="form-urg" autocomplete="off">
+      <label class="f">MESSAGE<textarea name="txt" id="u-txt" rows="2" placeholder="Ex. : sapeur-pompier en détresse au R+3, demande SMUR et VSAV"></textarea></label>
+      <label class="f">CANAL<select name="canal" id="u-canal"><option value="GRP 269">GRP 269 · OPE1 GTC</option><option value="GRP 275" selected>GRP 275 · CDT (commandement)</option></select></label>
+      <button class="send urg" type="submit">Message urgent au CODIS</button>
     </form>
   </div>
   <div class="tp" id="p-carnet" hidden><div id="carnet"></div></div>
@@ -136,7 +152,8 @@
     <div class="howto">
       <div><b>Lire le feu</b>Tournez autour de l'immeuble. Cliquez une fenêtre, la cage ou la porte : chaque observation vous prend 6 s.</div>
       <div><b>Reconnaître</b>Vous restez dehors. L'intérieur se dévoile sur la SITAC et dans la vue en coupe au fil des comptes rendus.</div>
-      <div><b>Commander</b>Cliquez sur un engin ou un binôme pour lui donner une mission. Chaque binôme a sa couleur.</div>
+      <div><b>Commander</b>Cliquez sur un engin : votre ordre part au chef d'agrès (DIR 614), qui le collationne et le répartit entre ses binômes. Pensez au binôme de sécurité.</div>
+      <div><b>Suivre</b>Le tableau de suivi montre chaque binôme engagé : pression ARI, heure de sortie, dernier compte rendu. Un binôme peut tomber en détresse.</div>
       <div><b>Questionner</b>Les témoins arrivent au fil de l'intervention. Chaque question prend 12 s.</div>
       <div><b>Rendre compte</b>Message d'ambiance dans les 5 minutes, puis comptes rendus. Chaque message est corrigé.</div>
     </div>

@@ -204,6 +204,7 @@ function unitIcon(ctx, x, y, a, now, small) {
 function renderHUD() {
   const W = G.W;
   document.documentElement.style.setProperty('--hudh', $('.hud').offsetHeight + 'px');
+  document.documentElement.style.setProperty('--sideh', $('.side').offsetHeight + 'px');
   $('#clock').textContent = GM.clock(W.t);
   const since = W.t - GM.T_ARRIVEE, ch = $('#chrono');
   if (G.ambiance) { ch.textContent = `Ambiance transmise à +${GM.fmtDur(G.ambiance.t - GM.T_ARRIVEE)}`; ch.className = 'chrono done'; }
@@ -225,13 +226,17 @@ function renderHUD() {
   const tank = $('#tankhud'); tank.textContent = G.alim ? 'FPT 1 alimenté sur PI' : `Citerne FPT 1 : ${Math.round(G.tank)} L`; tank.className = 'tank ' + (G.alim ? 'ok' : G.tank < 800 ? 'low' : '');
 }
 
-// ---------------------------------------------------------------- MENU CONTEXTUEL
+// ---------------------------------------------------------------- MENU CONTEXTUEL : ordre au chef d'agres
 let menu = null; // {pick}
 const TEAM_NAME = { BAT: 'Binôme d\'attaque', BAL: 'Binôme d\'alimentation' };
+const keepCons = { lance: true, cr: false, ari: false };
+function enginOf(pick) {
+  if (pick.type === 'team') { const a = G.actors.find(x => x.id === pick.id); return a ? a.engin : null; }
+  return { FPT1: 'FPT 1', FPT2: 'FPT 2' }[pick.id] || null;
+}
 function actorsFor(pick) {
-  if (pick.type === 'team') return G.actors.filter(a => a.id === pick.id);
-  if (pick.id === 'FPT1') return G.actors.filter(a => a.engin === 'FPT 1');
-  if (pick.id === 'FPT2') return G.actors.filter(a => a.engin === 'FPT 2');
+  const e = enginOf(pick);
+  if (e) return G.actors.filter(a => a.engin === e && a.kind === 'binome');
   return G.actors.filter(a => a.id === pick.id);
 }
 function openMenu(pick, x, y) {
@@ -244,47 +249,114 @@ function openMenu(pick, x, y) {
   m.style.top = Math.max(60, Math.min(y - 20, innerHeight - r.height - 8)) + 'px';
 }
 function closeMenu() { menu = null; $('#ctx').hidden = true; }
+function missionOptions(a) {
+  const opts = ['<option value="">— inchangé —</option>'];
+  for (const k of GM.availableMissions(a)) {
+    const l = GM.MISSIONS[k].label;
+    if (k === 'ATTAQUE' || k === 'ATTAQUE_R4') opts.push(`<option value="${k}|LDV 500">${l} (LDV 500)</option>`, `<option value="${k}|LDV 250">${l} (LDV 250)</option>`);
+    else if (k === 'RECHERCHE') { opts.push(`<option value="RECHERCHE|">${l}</option>`); if (G.K.facts.victime_lieu) opts.push(`<option value="RECHERCHE|CH1">${l}, priorité chambre côté rue</option>`); }
+    else opts.push(`<option value="${k}|" ${k === 'SAUVETAGE_SP' ? 'class="urg"' : ''}>${l}</option>`);
+  }
+  return opts.join('');
+}
+function slotRow(vid) {
+  const S = GM.SLOTS[vid]; if (!S) return '';
+  const cur = G.vpos[vid], mv = G.moves[vid];
+  return `<div class="msec slot"><div class="mt"><b>Emplacement</b><span class="hint">${mv ? 'déplacement en cours…' : esc(S[cur] ? S[cur].label : '')}</span></div>
+    <div class="mrow"><select id="slot-${vid}" aria-label="Emplacement">${Object.entries(S).map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${esc(v.label)}</option>`).join('')}</select><button class="mb" data-move="${vid}" ${mv ? 'disabled' : ''}>Déplacer</button></div></div>`;
+}
+function stateLine(a) {
+  if (a.distress) return '<span class="pill bad">DÉTRESSE</span>';
+  if (a.loc === 'ABSENT') return '<span class="pill">en route</span>';
+  if (a.mission) return `<span class="pill ${a.mission === 'SECURITE' ? 'ok' : 'warn'}">${esc(GM.MISSIONS[a.mission].label.split(/[(:]/)[0].trim())}</span>`;
+  return '<span class="pill">disponible</span>';
+}
 function renderMenu() {
   if (!menu) return;
   const p = menu.pick, m = $('#ctx');
   if (p.type === 'engin' && p.id === 'VLCG') {
     m.innerHTML = `<div class="mh"><b>VLCG</b><span>Votre véhicule de commandement</span><button class="x" data-close aria-label="Fermer">×</button></div>
-      <div class="msec"><button class="mb" data-go="msg">Rédiger un message (ambiance / compte rendu)</button><button class="mb" data-go="sitac">Ouvrir la SITAC</button><button class="mb" data-go="radio">Tableau des messages</button></div>`;
+      <div class="msec"><button class="mb" data-go="msg">Rédiger un message (ambiance, compte rendu, urgent)</button><button class="mb" data-go="sitac">Ouvrir la SITAC</button><button class="mb" data-go="radio">Tableau des messages radio</button></div>`;
     return;
   }
   const list = actorsFor(p);
   if (!list.length) { closeMenu(); return; }
-  const engin = list[0].engin;
-  const html = [`<div class="mh"><b>${esc(p.type === 'team' ? list[0].label : engin)}</b><span>${p.type === 'team' ? esc(engin) + ' — ordre via le chef d\'agrès' : list[0].kind === 'binome' ? 'Ordres via le chef d\'agrès' : 'Chef d\'agrès'}</span><button class="x" data-close aria-label="Fermer">×</button></div>`];
-  if (list[0].kind === 'binome') html.push(`<div class="mwater">${G.alim ? '<span class="pill ok">Alimenté sur PI</span>' : `<span class="pill ${G.tank < 800 ? 'bad' : 'warn'}">Citerne ${Math.round(G.tank)} L — non alimenté</span>`}</div>`);
-  for (const a of list) {
-    const col = S3.TEAM_COLORS[a.id] || 'var(--cmd)';
-    html.push(`<div class="msec" style="--tc:${col}">`);
-    if (a.kind === 'binome') html.push(`<div class="mt"><span class="tag">${a.id.replace(/\d/, '')}</span><b>${TEAM_NAME[a.role]}</b></div>`);
-    html.push(`<div class="mst" id="mst-${a.id}"></div>`);
-    if (a.loc === 'ABSENT') html.push('<p class="hint">En route.</p>');
-    else if (a.carry) html.push('<p class="hint">Extraction d\'une victime en cours.</p>');
-    else {
-      for (const k of GM.availableMissions(a)) {
-        const lab = GM.MISSIONS[k].label;
-        if (k === 'ATTAQUE') html.push(`<div class="mrow"><button class="mb" data-a="${a.id}" data-k="${k}">${lab}</button><select id="lance-${a.id}" aria-label="Lance"><option>LDV 500</option><option>LDV 250</option></select></div>`);
-        else if (k === 'RECHERCHE' && G.K.facts.victime_lieu) html.push(`<div class="mrow"><button class="mb" data-a="${a.id}" data-k="${k}">${lab}</button><select id="prio-${a.id}" aria-label="Priorité"><option value="">Sans priorité</option><option value="CH1" selected>Priorité : chambre au fond à droite</option></select></div>`);
-        else html.push(`<div class="mrow"><button class="mb" data-a="${a.id}" data-k="${k}">${lab}</button></div>`);
-      }
+  const engin = list[0].engin, binomes = list[0].kind === 'binome';
+  const html = [`<div class="mh"><b>${esc(engin)}</b><span>${binomes ? 'Ordre au chef d\'agrès · DIR 614' : 'Chef d\'agrès · DIR 614'}</span><button class="x" data-close aria-label="Fermer">×</button></div>`];
+  if (binomes) {
+    html.push(`<div class="mwater">${G.alim ? '<span class="pill ok">Alimenté sur PI</span>' : `<span class="pill ${G.tank < 800 ? 'bad' : 'warn'}">Citerne ${Math.round(G.tank)} L, non alimenté</span>`}</div>`);
+    html.push('<div class="msec"><div class="mt"><b>Missions</b></div>');
+    for (const a of list) {
+      const col = S3.TEAM_COLORS[a.id] || 'var(--cmd)';
+      html.push(`<div class="orow" style="--tc:${col}"><div class="who"><span class="tag">${a.id.replace(/\d/, '')}</span>${stateLine(a)}</div>
+        ${a.loc === 'ABSENT' || a.distress ? '' : `<select id="om-${a.id}" aria-label="Mission ${esc(a.label)}">${missionOptions(a)}</select>`}</div>`);
     }
+    html.push('</div><div class="msec"><div class="mt"><b>Sécurité</b><span class="hint">consignes transmises au CA</span></div>');
+    html.push([['lance', 'Établissement en eau avant toute ouverture de porte'], ['cr', 'Compte rendu à l\'arrivée au palier'], ['ari', 'Sortie à 100 bar, sans attendre le sifflet']].map(([k, l]) => `<label class="cons"><input type="checkbox" id="oc-${k}" ${keepCons[k] ? 'checked' : ''}> ${l}</label>`).join(''));
+    html.push(`</div><div class="msec"><button class="send" data-orderca="${esc(engin)}">Transmettre l'ordre au CA</button></div>`);
+    html.push(slotRow(engin === 'FPT 2' ? 'FPT2' : ''));
+  } else {
+    const a = list[0];
+    html.push(`<div class="msec"><div class="mt">${stateLine(a)}</div>`);
+    if (a.loc === 'ABSENT') html.push('<p class="hint">En route.</p>');
+    else for (const k of GM.availableMissions(a)) html.push(`<div class="mrow"><button class="mb" data-a="${a.id}" data-k="${k}">${GM.MISSIONS[k].label}</button></div>`);
     html.push('</div>');
+    if (a.loc !== 'ABSENT') html.push(slotRow(a.id));
   }
   m.innerHTML = html.join('');
-  updateMenuStatus();
 }
-function updateMenuStatus() {
-  if (!menu) return;
-  for (const a of G.actors) {
-    const el = document.getElementById('mst-' + a.id); if (!el) continue;
-    let s = a.status;
-    if (a.kind === 'binome') s += ` · ${GM.locName(a.loc)} · ARI ${Math.max(0, Math.round(a.air / 60))} min${a.flowing ? ' · lance en eau' : ''}${a.hurt ? ' · BLESSÉ' : ''}`;
-    el.textContent = s;
-  }
+function updateMenuStatus() { }
+
+// ---------------------------------------------------------------- SUIVI DES ENGAGEMENTS (tableau de controle ARI)
+const CR_ICON = { alerte: '⚠', victime: '▲', feu: '🔥', chaud: '◉', ok: '✓', fumee: '☁', info: '•' };
+function renderSuivi() {
+  const W = G.W, el = $('#suivi-list');
+  const bin = G.actors.filter(a => a.kind === 'binome' && a.loc !== 'ABSENT');
+  const html = bin.map(a => {
+    const col = S3.TEAM_COLORS[a.id] || 'var(--cmd)';
+    const bar = Math.max(0, Math.round(300 * a.air / 1500));
+    const seuil = a.cons && a.cons.ari ? 500 : 300;
+    const engaged = a.loc !== 'RUE' || (a.next && a.prog > 0);
+    const out = a.ari && engaged ? W.t + Math.max(0, a.air - seuil) / (a.effort || 1) : null;
+    const since = a.engT != null && a.ari ? Math.floor((W.t - a.engT) / 60) : null;
+    const cr = a.lastCR, fresh = cr && W.t - cr.t < 30;
+    const cls = a.distress ? 'dist' : a.hurt ? 'hurt' : bar < 80 && a.ari ? 'low' : a.mission === 'SECURITE' ? 'secu' : '';
+    return `<div class="sc2 ${cls}" style="--tc:${col}" data-team="${a.id}">
+      <div class="r1"><span class="tag">${a.id.replace(/\d/, '')}</span><b>${esc(a.engin)}</b><span class="loc">${esc(GM.locName(a.loc))}</span></div>
+      <div class="r2">${esc(a.distress ? 'DÉTRESSE' : a.mission ? GM.MISSIONS[a.mission].label.split(/[(:]/)[0].trim() : a.status)}</div>
+      ${a.ari ? `<div class="r3"><div class="pb"><i style="width:${bar / 3}%"></i></div><span>${bar} bar</span>${out ? `<span>sortie ${GM.hhmm(out)}</span>` : ''}${since != null && engaged ? `<span>${since} min</span>` : ''}</div>` : '<div class="r3 na">ARI non capelé</div>'}
+      ${cr ? `<div class="r4 ${cr.icon} ${fresh ? 'fresh' : ''}"><i>${CR_ICON[cr.icon] || '•'}</i><span><b>${GM.hhmm(cr.t)}</b> ${esc(cr.text.replace(/^Binôme d'(attaque|alimentation) : /, ''))}</span></div>` : ''}
+    </div>`;
+  }).join('') || '<p class="hint">Aucun binôme sur les lieux.</p>';
+  if (html !== renderSuivi.last) { renderSuivi.last = html; el.innerHTML = html; }
+}
+// ---------------------------------------------------------------- ALERTE DETRESSE
+function renderAlerte() {
+  const a = G.actors.find(x => x.distress && !x.distress.out), el = $('#alerte');
+  if (!a) { el.hidden = true; renderAlerte.last = ''; return; }
+  const d = a.distress, I = G.incident, W = G.W;
+  const steps = [
+    [!!d.rescuer, 'Engager le binôme de sécurité au sauvetage'],
+    [G.urgents.some(u => u.t >= d.t), 'Message urgent au CODIS (GRP 275)'],
+    [!!(G.requests.SMUR || G.requests.VSAV2), 'Demander VSAV / SMUR'],
+    [false, 'Geler les engagements non essentiels'],
+  ];
+  el.hidden = false;
+  const html = `<div class="ah"><b>DÉTRESSE</b> ${esc(a.label)} ${esc(a.engin)} — ${esc(GM.locName(a.loc))} · ${esc(GM.INCIDENTS[d.type].msg)} <span class="t"></span></div>
+    <ol>${steps.map(([ok, t]) => `<li class="${ok ? 'ok' : ''}">${t}</li>`).join('')}</ol>
+    <div class="ab"><button class="btn" data-al="ordre">Donner l'ordre de sauvetage</button><button class="btn" data-al="urg">Message urgent</button></div>`;
+  if (html !== renderAlerte.last) { renderAlerte.last = html; el.innerHTML = html; }
+  el.querySelector('.t').textContent = 'depuis ' + GM.fmtDur(W.t - d.t);
+}
+// ---------------------------------------------------------------- VICTIMES
+function renderVicts() {
+  const vs = G.victims.filter(v => v.atRue || v.evac);
+  const vsav = G.actors.some(x => x.kind === 'vsav' && x.loc === 'RUE');
+  $('#victs').innerHTML = vs.length ? `<div class="vh">Victimes</div>` + vs.map(v => {
+    const st = GM.vState(v);
+    return `<div class="vr ${st.c}"><div><b>${esc(v.name.split(',')[0])}</b><span>${v.evac ? 'évacué(e) · ' + esc(v.evac.dest) : v.pec ? esc(v.bilan || st.s) : 'en attente de bilan'}</span></div>
+      ${v.evac ? '' : `<div class="va">${G.requests.SMUR ? `<span class="pill ${G.requests.SMUR.onSite ? 'ok' : 'warn'}">SMUR ${G.requests.SMUR.onSite ? 'sur place' : 'demandé'}</span>` : `<button class="mini" data-vact="smur" data-v="${v.id}">SMUR</button>`}${v.pec && vsav ? `<button class="mini" data-vact="evac" data-v="${v.id}">Évacuer</button>` : ''}</div>`}</div>`;
+  }).join('') : '';
 }
 
 // ---------------------------------------------------------------- TEMOINS
@@ -369,9 +441,12 @@ function openOI() {
   for (const id in keep) { const el = document.getElementById(id); if (el) el.value = keep[id]; }
   $('#oiwin').hidden = false;
 }
+let radioFilter = '';
 function renderRadio() {
-  const rows = G.radio.slice().reverse().map(m => `<tr class="${m.kind}"><td>${m.n}</td><td>${GM.hhmm(m.t)}</td><td>${esc(m.from)}</td><td>${esc(m.to)}</td><td>${esc(m.text)}</td></tr>`).join('');
-  $('#radio').innerHTML = `<div class="tablewrap"><table><thead><tr><th>N°</th><th>GH</th><th>Origine</th><th>Dest.</th><th>Contenu</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const chans = ['', 'DIR 614', 'GRP 269', 'GRP 275', 'DIR 654'];
+  const rows = G.radio.filter(m => !radioFilter || m.ch === radioFilter).slice().reverse().map(m => `<tr class="${m.kind}"><td>${m.n}</td><td>${GM.hhmm(m.t)}</td><td class="ch">${esc((m.ch || '').replace(' ', '\u00a0'))}</td><td><b class="rfrom">${esc(m.from)} → ${esc(m.to)}</b><br>${esc(m.text)}</td></tr>`).join('');
+  $('#radio').innerHTML = `<div class="rfil">${chans.map(c => `<button class="rf" data-rf="${c}" aria-pressed="${c === radioFilter}">${c ? esc(GM.CANAL_LABEL[c]) : 'Tous'}</button>`).join('')}</div>
+    <div class="tablewrap"><table><thead><tr><th>N°</th><th>GH</th><th>Canal</th><th>Message</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function renderCarnet() {
   const facts = Object.values(G.K.facts).sort((a, b) => a.t - b.t);
@@ -431,12 +506,20 @@ function bind() {
   $('#ctx').addEventListener('click', e => {
     if (e.target.closest('[data-close]')) return closeMenu();
     const go = e.target.closest('[data-go]'); if (go) { openTab(go.dataset.go === 'msg' ? 'p-msg' : go.dataset.go === 'sitac' ? 'p-sitac' : 'p-radio'); closeMenu(); return; }
-    const b = e.target.closest('.mb[data-a]'); if (!b || G.ended) return;
+    if (G.ended) return;
+    const mv = e.target.closest('[data-move]');
+    if (mv) { const id = mv.dataset.move; if (GM.moveVehicle(id, document.getElementById('slot-' + id).value)) closeMenu(); return; }
+    const oc = e.target.closest('[data-orderca]');
+    if (oc) {
+      const cons = { lance: $('#oc-lance').checked, cr: $('#oc-cr').checked, ari: $('#oc-ari').checked };
+      Object.assign(keepCons, cons);
+      const list = actorsFor(menu.pick).map(a => { const v = (document.getElementById('om-' + a.id) || {}).value || ''; const [m, o] = v.split('|'); return { id: a.id, mission: m || null, opts: (m === 'ATTAQUE' || m === 'ATTAQUE_R4') ? { lance: o } : m === 'RECHERCHE' && o ? { priority: o } : {} }; });
+      if (!list.some(x => x.mission)) { UI.toast('Aucune mission choisie.', 'alerte'); return; }
+      GM.orderCA(oc.dataset.orderca, list, cons); closeMenu(); return;
+    }
+    const b = e.target.closest('.mb[data-a]'); if (!b) return;
     const a = G.actors.find(x => x.id === b.dataset.a);
-    const opts = {};
-    const l = document.getElementById('lance-' + a.id); if (l) opts.lance = l.value;
-    const p = document.getElementById('prio-' + a.id); if (p && p.value) opts.priority = p.value;
-    GM.order(a, b.dataset.k, opts); closeMenu();
+    GM.order(a, b.dataset.k, {}); closeMenu();
   });
   $('#dialog').addEventListener('click', e => {
     if (e.target.closest('[data-dclose]')) { dialogW = null; $('#dialog').hidden = true; return; }
@@ -459,13 +542,22 @@ function bind() {
   }));
   const readForm = id => {
     const f = new FormData($(id));
-    return { suis: f.get('suis') || '', vois: f.get('vois') || '', prevois: f.get('prevois') || '', fais: f.get('fais') || '', demande: f.get('demande') || '', victimes: f.get('victimes') || '', cos: !!f.get('cos'), renforts: f.getAll('renf') };
+    return { suis: f.get('suis') || '', vois: f.get('vois') || '', prevois: f.get('prevois') || '', fais: f.get('fais') || '', demande: f.get('demande') || '', victimes: f.get('victimes') || '', cos: !!f.get('cos'), renforts: f.getAll('renf'), canal: f.get('canal') || 'GRP 269' };
   };
   $('#form-amb').addEventListener('submit', e => { e.preventDefault(); if (G.ended) return; GM.sendMessage('ambiance', readForm('#form-amb')); renderMsgState(); showCorrection(G.lastCorrection); });
   $('#form-cr').addEventListener('submit', e => { e.preventDefault(); if (G.ended) return; GM.sendMessage('cr', readForm('#form-cr')); e.target.reset(); renderMsgState(); showCorrection(G.lastCorrection); });
   document.addEventListener('click', e => {
     const c = e.target.closest('[data-corr]'); if (!c) return;
     showCorrection(c.dataset.corr === 'amb' ? Object.assign({ type: 'ambiance' }, G.ambiance) : Object.assign({ type: 'cr', n: G.crs.length }, G.crs[G.crs.length - 1]));
+  });
+  $('#form-urg').addEventListener('submit', e => { e.preventDefault(); if (G.ended) return; const f = new FormData(e.target); GM.sendUrgent((f.get('txt') || '').trim(), f.get('canal')); e.target.reset(); UI.toast('Message urgent transmis.', 'urgent'); });
+  $('#radio').addEventListener('click', e => { const b = e.target.closest('[data-rf]'); if (!b) return; radioFilter = b.dataset.rf; renderRadio(); });
+  $('#suivi-list').addEventListener('pointerdown', e => { const c = e.target.closest('[data-team]'); if (!c || mode !== 'game') return; const r = c.getBoundingClientRect(); openMenu({ type: 'team', id: c.dataset.team }, r.right, r.top + 20); });
+  $('#victs').addEventListener('click', e => { const b = e.target.closest('[data-vact]'); if (!b) return; GM.victimAction(b.dataset.v, b.dataset.vact); renderVicts(); });
+  $('#alerte').addEventListener('click', e => {
+    const b = e.target.closest('[data-al]'); if (!b) return;
+    if (b.dataset.al === 'urg') { openTab('p-msg'); setTimeout(() => { const t = $('#u-txt'); t.scrollIntoView({ block: 'center' }); t.focus(); }, 50); }
+    else { const s2 = G.actors.find(x => GM.availableMissions(x).includes('SAUVETAGE_SP') && x.mission === 'SECURITE') || G.actors.find(x => GM.availableMissions(x).includes('SAUVETAGE_SP')); if (s2) { const r = b.getBoundingClientRect(); openMenu({ type: 'team', id: s2.id }, r.left, r.bottom + 30); const sel = document.getElementById('om-' + s2.id); if (sel) sel.value = 'SAUVETAGE_SP|'; } else UI.toast('Aucun binôme disponible : demandez des renforts.', 'alerte'); }
   });
   $('#plan').addEventListener('click', openBig);
   $('#btn-oi').addEventListener('click', openOI);
@@ -532,7 +624,7 @@ function openBig() {
 // ---------------------------------------------------------------- CYCLE DE VIE
 function resetUI() {
   closeMenu(); dialogW = null; $('#dialog').hidden = true; $('#corr').hidden = true;
-  $('#form-amb').reset(); $('#form-cr').reset(); $('#toast').innerHTML = '';
+  $('#form-amb').reset(); $('#form-cr').reset(); $('#form-urg').reset(); $('#toast').innerHTML = ''; $('#victs').innerHTML = ''; $('#alerte').hidden = true; $('#suivi-list').innerHTML = ''; renderSuivi.last = ''; renderAlerte.last = ''; radioFilter = '';
   $('#btn-pause').textContent = 'Pause'; $('#pausebadge').hidden = true;
   renderMsgState();
 }
@@ -548,7 +640,7 @@ function startGame() {
   mode = 'game'; document.body.classList.remove('home');
   $('#intro').hidden = true; S3.autoRotate(false); S3.view('rue');
   UI.toast('Vous arrivez sur les lieux. Le CA du FPT 1 vous attend au pied de l\'immeuble.', 'cr');
-  setTimeout(() => GM.radio('CA FPT 1', 'CDG', 'Point de situation : feu d\'appartement au 3e, fumées noires par les fenêtres côté rue. La cage est enfumée. J\'ai ouvert la porte d\'immeuble. J\'attends vos ordres.', 'cr'), 1500);
+  setTimeout(() => GM.radio('CA FPT 1', 'CDG', 'Point de situation : feu d\'appartement au 3e, fumées noires par les fenêtres côté rue. La cage est enfumée. J\'ai ouvert la porte d\'immeuble. J\'attends vos ordres.', 'alerte', 'DIR 614'), 1500);
 }
 let last = 0, uiT = 0;
 function loop(now) {
@@ -562,8 +654,8 @@ function loop(now) {
   S3.update(real, now);
   if (mode === 'game' && now - uiT > 250) {
     uiT = now;
-    renderHUD();
-    if (G.dirty) { G.dirty = false; if (menu) renderMenu(); renderDialog(); renderMsgState(); dirtyTabs = true; }
+    renderHUD(); renderSuivi(); renderAlerte();
+    if (G.dirty) { G.dirty = false; renderDialog(); renderMsgState(); renderVicts(); dirtyTabs = true; }
     else updateMenuStatus();
     if (dialogW && !G.busy && $('#dialog .typing')) renderDialog();
     if (!$('#p-sitac').hidden) drawPlan(now);

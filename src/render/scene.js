@@ -540,7 +540,7 @@ function truck(id, o) {
   return g;
 }
 let ladder, turntable, ladderTarget = null, ladderProg = 0;
-const PARK = { FPT1: [-2.6, 5.4], PA: [7.8, 5.0], VSAV: [18.2, 5.6], VLCG: [-11.2, 4.9], FPT2: [-21, 5.6] };
+const PARK = { FPT1: [-2.6, 5.4], PA: [7.8, 5.0], VSAV: [18.2, 5.6], VLCG: [-11.2, 4.9], FPT2: [-21, 5.6], VSAV2: [44, 9.4] };
 function buildVehicles() {
   const fpt = truck('FPT1', { len: 8.2, h: 2.2, color: '#7f0910', label: 'FPT 1', axles: 2, roofLadder: true });
   fpt.position.set(PARK.FPT1[0], 0, PARK.FPT1[1]);
@@ -817,7 +817,18 @@ S3.update = function (dtReal, now) {
   }
   if (strobe) strobe.intensity = blink ? 60 : 0;
   // renfort FPT 2
-  if (G.actors.some(a => a.engin === 'FPT 2') && !vehicles.FPT2) { const f2 = truck('FPT2', { len: 8.2, h: 2.2, color: '#7f0910', label: 'FPT 2', roofLadder: true }); f2.position.set(PARK.FPT2[0], 0, PARK.FPT2[1]); }
+  if (G.actors.some(a => a.engin === 'FPT 2') && !vehicles.FPT2) { const xz = GAME.SLOTS.FPT2[G.vpos.FPT2 || 'transit'].xz; const f2 = truck('FPT2', { len: 8.2, h: 2.2, color: '#7f0910', label: 'FPT 2', roofLadder: true }); f2.position.set(xz[0], 0, xz[1]); }
+  if (G.actors.some(a => a.id === 'VSAV2') && !vehicles.VSAV2) { const v2 = truck('VSAV2', { len: 6.4, h: 2.2, color: '#8a0b13', stripe: '#f4f4f4', locker: '#e8e8e8', label: 'VSAV 2', axles: 2 }); v2.position.set(60, 0, PARK.VSAV2[1]); v2.visible = false; }
+  // emplacements choisis par le joueur (deplacement anime)
+  for (const id in vehicles) {
+    const g = vehicles[id], S = GAME.SLOTS[id]; if (!S || !g.visible) continue;
+    const mv = G.moves && G.moves[id], slot = G.vpos && G.vpos[id];
+    let tx, tz;
+    if (mv) { const k = clamp((W.t - mv.t0) / (mv.t1 - mv.t0), 0, 1), A = S[mv.from].xz, B = S[mv.to].xz; tx = A[0] + (B[0] - A[0]) * k; tz = A[1] + (B[1] - A[1]) * k; }
+    else if (slot && S[slot]) [tx, tz] = S[slot].xz; else continue;
+    if (g.userData.arrive != null && g.userData.arrive < 1) { PARK[id] = [tx, tz]; g.position.z = tz; continue; }
+    g.position.x += (tx - g.position.x) * Math.min(1, dtReal * 3); g.position.z += (tz - g.position.z) * Math.min(1, dtReal * 3);
+  }
   // echelle
   const pa = G.actors.find(a => a.id === 'PA');
   if (pa && pa.loc !== 'ABSENT') {
@@ -855,6 +866,22 @@ S3.update = function (dtReal, now) {
     t.label.visible = S3.labelsOn;
     // victime portee
     t.carry = a.carry;
+    // bulle de compte rendu au-dessus du binome
+    const cr = a.lastCR;
+    if (cr !== t.crRef) {
+      t.crRef = cr;
+      if (t.bubble) { t.group.remove(t.bubble); t.bubble.material.map.dispose(); t.bubble = null; }
+      if (cr) {
+        const col = { alerte: '#e2373f', victime: '#2fb36b', feu: '#ff7a2a', chaud: '#f08c2a', ok: '#2fb36b', fumee: '#8d9db0', info: '#9a72ff' }[cr.icon] || '#9a72ff';
+        let txt = cr.text.replace(/^Binôme d'(attaque|alimentation) : /, '').split(/(?<=[.!])\s/)[0];
+        if (txt.length > 46) txt = txt.slice(0, 44) + '…';
+        t.bubble = label(txt, col, { scale: 0.0085, always: true, size: 34 }); t.bubble.position.set(0, 3.15, 0); t.group.add(t.bubble);
+      }
+    }
+    if (t.bubble) t.bubble.visible = S3.labelsOn && (cr && (W.t - cr.t < 40 || a.distress));
+    // detresse : balise rouge clignotante
+    if (a.distress && !t.sos) { t.sos = glow('#ff2030', 5, t.group, 0, 1.2, 0, 0.9); t.sosLb = label('DÉTRESSE', '#e2373f', { scale: 0.012, always: true, bg: 'rgba(80,8,12,0.92)' }); t.sosLb.position.set(0, 4.5, 0); t.group.add(t.sosLb); }
+    if (t.sos) { const on = !!a.distress; t.sos.visible = on && Math.floor(now / 350) % 2 === 0; t.sosLb.visible = on; }
   }
   // victime 1
   const v1 = G.victims[0];

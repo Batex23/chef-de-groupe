@@ -220,3 +220,73 @@ legend { padding: 0 6px; color: var(--ink-soft); font-size: 13px; }
 .sw.arrow { height: 3px; width: 16px; border-radius: 0; } .sw.dash { background: repeating-linear-gradient(90deg, var(--cmd) 0 4px, transparent 4px 7px); } .sw.line { height: 3px; width: 16px; }
 .sw.box { background: transparent; border: 2px solid var(--cmd); }
 #bigplan { cursor: crosshair; }
+
+/* ---------------- suivi des engagements (controle ARI) */
+#suivi { position: fixed; left: max(16px, env(safe-area-inset-left, 0px)); top: calc(var(--hudh, 64px) + 56px); z-index: 4; width: 250px;
+  max-height: calc(100vh - var(--hudh, 64px) - 56px - var(--sideh, 260px) - 26px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+body.home #suivi, body.home #alerte { display: none; }
+.suh { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; padding: 7px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: #151f2b; }
+.suh b { font: 700 15px/1 var(--f-disp); letter-spacing: .05em; text-transform: uppercase; }
+.suh span { font: 500 10px var(--f-mono); color: var(--mute); }
+#suivi-list { display: grid; gap: 6px; padding: 6px; }
+#suivi-list .hint { padding: 4px; }
+.sc2 { border-left: 4px solid var(--tc); background: #172130; border-radius: 0 5px 5px 0; padding: 6px 8px; display: grid; gap: 4px; cursor: pointer; }
+.sc2:hover { background: #1d2a3b; }
+.sc2 .r1 { display: flex; align-items: center; gap: 6px; } .sc2 .r1 b { font: 700 14px/1 var(--f-disp); letter-spacing: .04em; }
+.sc2 .r1 .tag { font-size: 11px; padding: 3px 5px; }
+.sc2 .loc { margin-left: auto; font: 500 11px var(--f-mono); color: var(--ink-soft); }
+.sc2 .r2 { font-size: 12px; color: var(--ink-soft); line-height: 1.25; }
+.sc2 .r3 { display: flex; align-items: center; gap: 7px; font: 600 11px var(--f-mono); color: var(--ink-soft); }
+.sc2 .r3.na { color: var(--mute); font-weight: 500; }
+.pb { flex: 1; height: 6px; background: #0d141c; border-radius: 3px; overflow: hidden; } .pb i { display: block; height: 100%; background: var(--eau); }
+.sc2.low .pb i { background: var(--risk); } .sc2.low .r3 { color: var(--risk); }
+.sc2 .r4 { display: flex; gap: 6px; font-size: 11.5px; line-height: 1.3; color: var(--ink-soft); background: #111a24; border-radius: 4px; padding: 4px 6px; }
+.sc2 .r4 i { font-style: normal; font-weight: 700; width: 14px; text-align: center; }
+.sc2 .r4 b { font: 600 10.5px var(--f-mono); color: var(--mute); }
+.sc2 .r4 span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sc2 .r4.alerte i, .sc2 .r4.feu i { color: var(--inc); } .sc2 .r4.victime i { color: var(--pers); } .sc2 .r4.chaud i { color: var(--risk); } .sc2 .r4.ok i { color: var(--pers); } .sc2 .r4.fumee i { color: var(--smoke-l); }
+.sc2 .r4.fresh { outline: 1px solid var(--tc); animation: crflash 1.2s ease-out 2; }
+@keyframes crflash { 0% { background: #2a3a50; } 100% { background: #111a24; } }
+.sc2.secu { box-shadow: inset 0 0 0 1px var(--pers); }
+.sc2.hurt { box-shadow: inset 0 0 0 1px var(--risk); }
+.sc2.dist { background: #3a1216; box-shadow: inset 0 0 0 2px var(--inc); animation: distb 1s steps(2) infinite; }
+@keyframes distb { 50% { background: #5a161c; } }
+
+/* ---------------- alerte detresse */
+#alerte { position: fixed; left: 50%; transform: translateX(-50%); top: calc(var(--hudh, 64px) + 10px); z-index: 7; width: min(640px, calc(100vw - 600px)); min-width: 380px;
+  background: #2a0d10; border: 2px solid var(--inc); border-radius: 8px; padding: 10px 14px; box-shadow: 0 10px 40px rgba(226,55,63,.35); }
+#alerte .ah { font-size: 13.5px; line-height: 1.35; } #alerte .ah b { font: 700 18px var(--f-disp); color: #ff6b72; letter-spacing: .08em; margin-right: 6px; animation: distb 1s steps(2) infinite; }
+#alerte .t { font: 600 12px var(--f-mono); color: #ffb3b6; margin-left: 6px; }
+#alerte ol { margin: 8px 0; padding-left: 20px; font-size: 13px; display: grid; gap: 2px; }
+#alerte li.ok { color: var(--pers); text-decoration: line-through; }
+#alerte .ab { display: flex; gap: 8px; } #alerte .ab .btn { border-color: var(--inc); }
+
+/* ---------------- ordre au chef d'agres */
+.orow { display: grid; gap: 4px; border-left: 3px solid var(--tc); padding: 4px 0 6px 8px; }
+.orow .who { display: flex; gap: 6px; align-items: center; }
+.orow select, .slot select { width: 100%; background: var(--panel2); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 6px; font-size: 12.5px; }
+option.urg { color: #ff6b72; font-weight: 700; }
+.cons { display: flex; gap: 7px; align-items: flex-start; font-size: 12.5px; color: var(--ink-soft); }
+.slot .mrow select { flex: 1 1 200px; } .slot .mb { flex: 0 0 auto; }
+#ctx .send { width: 100%; }
+.send.urg { background: var(--inc); }
+
+/* ---------------- victimes */
+#victs:empty { display: none; }
+#victs { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; display: grid; gap: 5px; }
+.vh { font: 700 13px var(--f-disp); letter-spacing: .06em; text-transform: uppercase; color: var(--pers); }
+.vr { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; border-left: 3px solid var(--pers); padding-left: 7px; }
+.vr.ur { border-left-color: var(--risk); } .vr.ua, .vr.dead { border-left-color: var(--inc); }
+.vr b { display: block; font-size: 12.5px; } .vr span { font-size: 11px; color: var(--ink-soft); }
+.va { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.mini { background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; font-size: 11px; padding: 3px 6px; cursor: pointer; color: var(--ink); }
+.mini:hover { border-color: var(--pers); }
+
+/* ---------------- radio par canal */
+.rfil { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.rf { background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; font-size: 11px; padding: 3px 7px; cursor: pointer; color: var(--ink-soft); }
+.rf[aria-pressed="true"] { background: var(--cmd); border-color: var(--cmd); color: #fff; }
+td.ch { font: 600 10.5px var(--f-mono); white-space: nowrap; color: var(--chem); }
+tr.urgent td { color: #ff8a90; font-weight: 600; }
+.ti.urgent { border-left-color: var(--inc); background: #2a0d10; }
+.rfrom { font: 600 11px var(--f-mono); color: var(--ink-soft); }
