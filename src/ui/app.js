@@ -522,7 +522,7 @@ function openBig() {
   const c = $('#bigplan'), wrap = $('#sitacbig');
   wrap.hidden = false;
   const w = Math.min(innerWidth - 48, 1600), h = w * PH / PW, dpr = Math.min(devicePixelRatio || 1, 2);
-  const hh = Math.min(h, innerHeight - 120), ww = hh * PW / PH;
+  const hh = Math.min(h, innerHeight - 230), ww = hh * PW / PH;
   c.style.width = ww + 'px'; c.style.height = hh + 'px';
   c.width = ww * dpr; c.height = hh * dpr;
   bigCtx = c.getContext('2d'); bigCtx.setTransform(dpr * ww / PW, 0, 0, dpr * ww / PW, 0, 0);
