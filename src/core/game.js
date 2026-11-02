@@ -1338,8 +1338,8 @@ function modelOI() {
 // SITAC DU JOUEUR (dessinee avec les symboles conventionnels)
 // ===========================================================================
 function sitacAdd(el) { el.t = G.W.t; G.sitacUser.push(el); G.dirty = true; }
-function sitacRemoveNear(x, y) {
-  let best = -1, bd = 1.2;
+function sitacRemoveNear(x, y, r) {
+  let best = -1, bd = r || 1.2;
   G.sitacUser.forEach((e, i) => {
     const d = e.pts ? Math.min(...e.pts.map(q => Math.hypot(q[0] - x, q[1] - y))) : Math.hypot((e.x2 != null ? (e.x + e.x2) / 2 : e.x) - x, (e.y2 != null ? (e.y + e.y2) / 2 : e.y) - y);
     if (d < bd) { bd = d; best = i; } });
