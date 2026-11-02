@@ -617,7 +617,8 @@ function doDrop(a, s) {
   G.dirty = true;
 }
 function doAttack(a, s, dt) {
-  const zFire = ROOMS.filter(r => roomOnFire(G.W, r) || (hasFire(G.W, r) && G.W.Z[r].fireQ > 30));
+  // tant qu'un foyer n'est pas abattu (meme refroidi un instant par la lance), le binome reste dessus
+  const zFire = ROOMS.filter(r => hasFire(G.W, r));
   if (!zFire.length) {
     a.plan.shift(); a.flowing = false;
     const res = G.W.smoulder.filter(x => !x.done).map(x => ROOM_NAMES[x.zone]);
