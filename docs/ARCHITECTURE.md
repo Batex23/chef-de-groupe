@@ -29,21 +29,21 @@ La cage d'escalier est pour l'instant un volume unique avec un profil vertical p
 - **`scene.js`** assemble la scène : immeuble du scénario et voisins, R+3 complet avec cloisons, mobilier et brouillard de reconnaissance, engins, personnages, fumées, flammes et lumières pilotées par le moteur. La vue en coupe utilise un plan de découpe.
 - **Qualité « Standard »** : ombres, ombrage de contact (GTAO), halo lumineux (bloom), anticrénelage. **Qualité « Léger »**, pour les portables de caserne : rendu direct, textures en 256 px, moins de particules.
 
-## Multijoueur (étape suivante)
+## Multijoueur (en préparation)
 
-L'hébergement reste statique (GitHub Pages ou Apps Script). La synchronisation passe par **Firebase Realtime Database**, gratuite jusqu'à 100 connexions simultanées.
+Décisions prises avec le formateur référent (novembre 2026) :
 
-- **Hôte qui fait foi** : le navigateur du formateur fait tourner `sim.js` et `game.js`. Il publie un état résumé 2 fois par seconde : positions des binômes, état du feu par pièce, ouvertures, victimes, messages.
-- **Clients** : ils envoient leurs ordres, questions et messages comme des événements horodatés. L'hôte les applique et les diffuse.
-- **Rôles et ce que voit chacun** :
-  - **chef d'agrès** : ses binômes et son engin, ses établissements ;
-  - **chef de groupe** : comme aujourd'hui ;
-  - **chef de colonne** : SITAC de colonne, OCT, activation du PC ;
-  - **officier renseignements** : tableau des messages, SITAC ;
-  - **officier moyens** : point de transit, suivi des engins ;
-  - **chef de site**.
-  Le formateur joue le CODIS et injecte les événements.
-- **Radio** : canaux définis par l'OCT. Un message n'est reçu que par les postes à l'écoute de son canal.
+- **Jusqu'à 10 joueurs**, réunis dans la même salle de formation ou à distance (chacun dans sa caserne).
+- **Une salle par séance** : le formateur (ou le premier joueur) crée la salle et obtient un code ; les autres le saisissent et choisissent leur rôle. Pas de compte.
+- **Hôte qui fait foi** : le navigateur de l'hôte fait tourner `sim.js` et `game.js` et publie l'état ; les autres envoient des événements horodatés (ordres, questions, messages). Synchronisation par **Firebase Realtime Database** (offre gratuite).
+- **Cloisonnement de l'information** : chaque rôle ne voit que ce que son rôle voit. Le CA tient le suivi de ses binômes ; le CDG ne connaît que les comptes rendus et ses propres observations ; le PC voit la SITAC et le tableau des messages.
+- **Rôles** : CA (FPT, PA, VSAV), CDG, CDC, officier renseignements, officier moyens, CDS. Les rôles sans joueur sont tenus par l'ordinateur.
+- **CODIS** : joué par le formateur s'il y en a un (il injecte aussi les événements) ; sinon tenu par l'ordinateur.
+- **Radio vocale** en alternat, canal par canal (DIR 614, GRP 275, DIR 602…) : on n'entend que les canaux veillés. **Chaque message est enregistré** et réécoutable dans le tableau des messages et au débriefing. Transport : WebRTC quand le réseau le permet, sinon messages enregistrés transmis par la base (quelques secondes de décalage). Les clips audio (Opus, environ 3 Ko/s) sont stockés dans la base de la séance.
+- **Débriefing commun** avec chronologie, réécoute des messages radio et SITAC de chaque rôle.
+- **SITAC** dessinée par chaque officier avec les six couleurs conventionnelles (noir, rouge, vert, bleu, orange, violet), symboles, traits libres, zones et textes ; une charte graphique et un outil de type Crimson viendront compléter.
+
+Avant le développement, `test-reseau.html` vérifie sur un portable de caserne : accès à Firebase (simple et WebSocket), bibliothèque Firebase, WebRTC (sortie UDP), micro et enregistrement.
 
 Comme `sim.js` est en JavaScript pur, la même simulation pourra plus tard tourner sur un petit serveur si nécessaire, sans réécriture.
 

@@ -3,11 +3,11 @@
 // ===========================================================================
 (function () {
 'use strict';
-const { CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, fedRate, roomOnFire, hasFire, clamp } = SIM;
+const { CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, fedRate, roomOnFire, hasFire, hasResidual, clamp } = SIM;
 
 const T_ECLOSION_CLOCK = 19 * 3600 + 31 * 60; // 19h31
 const T_ARRIVEE = 660;                          // arrivee du CDG (s depuis l'eclosion)
-const T_FIN_MAX = T_ARRIVEE + 40 * 60;
+const T_FIN_MAX = T_ARRIVEE + 75 * 60;
 const ROOMS = ['COU', 'SEJ', 'CUI', 'CH1', 'CH2', 'SDB', 'CH3'];
 const ROOM_NAMES = { SEJ: 'Séjour', CUI: 'Cuisine', CH1: 'Chambre 1', COU: 'Couloir', CH2: 'Chambre 2', SDB: 'Salle de bains', CH3: 'Chambre 3' };
 const LEVELS = ['RDC', 'R1', 'R2', 'R3', 'R4'];
@@ -48,6 +48,10 @@ function newGame() {
     K: { layout: false, facts: {}, rooms: {}, cage: {} },
     asked: {}, actors: [], victims: [], timers: [], dirty: true, lastUI: 0, codisRelance: false,
     busy: null, observations: [], fire: { cur: 'developpement', cand: null, candT: 0, hist: [], lastEvt: 0, log: [] },
+    phase: 'arrivee', oi: null, sitacUser: [],
+    r4: { exp: 0, t0: null, k: 1, q: 0, out: false, residual: 0, deblaye: false, warned: false }, controle: null, reprises: 0,
+    crFeed: [], cosT: null, incident: null, distressLog: [], vpos: {}, moves: {}, chanErr: 0, urgents: [], orderLog: [],
+    rng: mulberry32((Math.random() * 1e9) | 0),
     witnesses: WITNESSES.map(w => ({ id: w.id, present: false, appearT: w.appear, arrivedT: null })),
   });
   for (const w of G.witnesses) G.timers.push({ t: w.appearT, fn: () => { w.present = true; w.arrivedT = G.W.t; G.dirty = true;
@@ -68,7 +72,11 @@ function newGame() {
   // simulation jusqu'a l'arrivee
   while (W.t < T_ARRIVEE) { runTimers(); step(W); updateVictims(CFG.dt); }
   W.events.length = 0;
+  // incident de securite aleatoire sur un binome engage (2 parties sur 3)
+  if (G.rng() < 0.67) G.incident = { at: T_ARRIVEE + 420 + G.rng() * 900, type: ['malaise', 'ari', 'perdu'][Math.floor(G.rng() * 3)], state: 'pending' };
+  for (const id of ['PA', 'VSAV']) G.vpos[id] = DEFAULT_SLOT[id];
 }
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 function binome(id, role, engin) {
   return { id, kind: 'binome', role, label: (role === 'BAT' ? "Binôme d'attaque" : "Binôme d'alimentation"), engin, loc: 'RUE', plan: [], status: 'Disponible au pied de l\'engin',
     air: 1500, lance: null, flowing: false, established: false, hazard: 0, hurt: false, visited: {}, mission: null };
@@ -80,11 +88,17 @@ function clock(t) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 }
 function hhmm(t) { return clock(t).slice(0, 5).replace(':', 'h'); }
-function radio(from, to, text, kind) {
+// Canaux SDIS 33, groupement Centre (Merignac) : DIR 614 tactique du groupement, GRP 269 operationnel,
+// GRP 275 commandement (le COS y bascule ses comptes rendus), DIR 654 securite des porteurs ARI.
+const CANAUX = { TAC: 'DIR 614', OPE: 'GRP 269', CDT: 'GRP 275', ARI: 'DIR 654' };
+const CANAL_LABEL = { 'DIR 614': 'DIR 614 · tactique groupement', 'GRP 269': 'GRP 269 · OPE1 GTC', 'GRP 275': 'GRP 275 · CDT', 'DIR 654': 'DIR 654 · sécurité ARI' };
+function radio(from, to, text, kind, ch) {
   G.msgNo++;
-  G.radio.push({ n: G.msgNo, t: G.W.t, from, to, text, kind: kind || '' });
+  if (!ch) ch = /CODIS/.test(from + to) ? (G.cosT != null ? CANAUX.CDT : CANAUX.OPE) : CANAUX.TAC;
+  G.radio.push({ n: G.msgNo, t: G.W.t, from, to, text, kind: kind || '', ch });
   G.dirtyRadio = true;
-  UI.toast && UI.toast(`${from} → ${to} : ${text}`, kind);
+  // les comptes rendus des binomes s'affichent sur le tableau de suivi et dans la scene, pas en bandeau
+  if (UI.toast && ['alerte', 'urgent', 'temoin', 'obs'].includes(kind) || UI.toast && from === 'CODIS') UI.toast(`${from} → ${to} : ${text}`, kind || 'msg');
 }
 function know(key, label) {
   if (G.K.facts[key]) return;
@@ -99,6 +113,32 @@ function penalty(pts, text) { G.safety.push({ t: G.W.t, pts, text }); }
 function arrive(id) {
   const a = G.actors.find(x => x.id === id);
   if (a) { a.loc = 'RUE'; a.status = 'Sur les lieux, en attente d\'ordres'; radio(a.engin, 'CDG', `${a.engin} sur les lieux.`); G.dirty = true; }
+}
+// emplacements des engins (le joueur peut les deplacer)
+const SLOTS = {
+  PA: { facade: { label: 'Façade côté rue, au droit des fenêtres', xz: [7.8, 5.0] }, facade_o: { label: 'Façade côté rue, à l\'ouest (sous le séjour)', xz: [2.0, 5.0] }, angle: { label: 'Angle de la rue, à 20 m', xz: [24, 5.4] }, transit: { label: 'Point de transit (avenue)', xz: [44, 5.6] } },
+  VSAV: { aval: { label: 'En aval, près de la porte d\'immeuble', xz: [18.2, 5.6] }, transit: { label: 'Point de transit (avenue)', xz: [44, 5.6] } },
+  FPT2: { transit: { label: 'Point de transit (avenue)', xz: [-40, 5.6] }, pied: { label: 'Derrière le VLCG, au pied de l\'immeuble', xz: [-20, 5.6] } },
+  VSAV2: { transit: { label: 'Point de transit (avenue)', xz: [44, 9.4] }, aval: { label: 'En aval, derrière le VSAV 1', xz: [26, 5.6] } },
+};
+const DEFAULT_SLOT = { PA: 'facade', VSAV: 'aval', FPT2: 'transit', VSAV2: 'transit' };
+const MOVE_TIME = 60;
+function vehicleId(a) { return a.kind === 'binome' ? (a.engin === 'FPT 2' ? 'FPT2' : 'FPT1') : a.id; }
+function moveVehicle(id, slot) {
+  if (!SLOTS[id] || !SLOTS[id][slot] || G.vpos[id] === slot) return false;
+  const a = G.actors.find(x => x.id === id);
+  if (id === 'PA' && a && (a.stationed || a.mission)) { radio('PA 18', 'CDG', 'Échelle en station ou en manœuvre : déplacement impossible sans la replier.', 'cr', CANAUX.TAC); return false; }
+  G.moves[id] = { from: G.vpos[id], to: slot, t0: G.W.t, t1: G.W.t + MOVE_TIME };
+  radio('CDG', id.replace(/(\D+)(\d)/, '$1 $2'), `Repositionnez-vous : ${SLOTS[id][slot].label.toLowerCase()}.`, 'ordre', CANAUX.TAC);
+  G.timers.push({ t: G.W.t + MOVE_TIME, fn: () => { G.vpos[id] = slot; delete G.moves[id]; G.dirty = true; } });
+  G.dirty = true; return true;
+}
+function approachDelay(a) {
+  // marche d'approche depuis l'engin : depend de son emplacement
+  const vid = vehicleId(a), slot = G.vpos[vid];
+  if (slot === 'transit') return 50;
+  if (vid === 'FPT2') return 15;
+  return 0;
 }
 const RENFORTS = {
   FPT2: { label: 'FPT supplémentaire', delay: 12 * 60 },
@@ -120,10 +160,12 @@ function renfortArrive(k) {
   G.requests[k].onSite = true;
   if (k === 'FPT2') {
     G.actors.push(binome('BAT2', 'BAT', 'FPT 2'), binome('BAL2', 'BAL', 'FPT 2'));
-    radio('FPT 2', 'CDG', 'FPT 2 sur les lieux, 2 binômes disponibles.');
+    G.vpos.FPT2 = 'transit';
+    radio('FPT 2', 'CDG', 'FPT 2 au point de transit, 2 binômes disponibles. Où dois-je me présenter ?', 'alerte', CANAUX.TAC);
   } else if (k === 'VSAV2') {
     G.actors.push({ id: 'VSAV2', kind: 'vsav', label: 'VSAV 2', engin: 'VSAV 2', loc: 'RUE', plan: [], status: 'Sur les lieux', pec: false });
-    radio('VSAV 2', 'CDG', 'VSAV 2 sur les lieux.');
+    G.vpos.VSAV2 = 'transit';
+    radio('VSAV 2', 'CDG', 'VSAV 2 au point de transit. Où dois-je me présenter ?', 'alerte', CANAUX.TAC);
   } else radio(RENFORTS[k].label, 'CDG', `${RENFORTS[k].label} sur les lieux.`);
   G.dirty = true;
 }
@@ -157,6 +199,7 @@ function updateVictims(dt) {
   }
 }
 function vState(v) {
+  if (v.sp) return v.grave ? { s: 'Urgence absolue', c: 'ua' } : { s: 'Urgence relative', c: 'ur' };
   if (v.fed >= 2.5) return { s: 'Décédé', c: 'dead' };
   if (v.fed >= 1) return { s: 'Inconscient (UA)', c: 'ua' };
   if (v.fed >= 0.3) return { s: 'Conscience altérée', c: 'ur' };
@@ -193,10 +236,17 @@ const MISSIONS = {
   R4: { label: 'Reconnaissance du R+4 et mise en sécurité des occupants', who: ['binome'] },
   EXUTOIRE: { label: "Ouvrir l'exutoire en tête de cage", who: ['binome'] },
   ALIM: { label: 'Alimenter le FPT sur le PI (80 m)', who: ['binome'] },
+  ATTAQUE_R4: { label: 'Attaque du feu au R+4 (LDV par la cage)', who: ['binome'] },
+  DEBLAI: { label: 'Déblai et dégarnissage des pièces sinistrées (noyage des foyers résiduels)', who: ['binome'] },
+  CONTROLE: { label: 'Reconnaissance à la caméra thermique (foyer, victimes, points chauds)', who: ['binome'] },
+  VPP: { label: 'Ventilation opérationnelle : VPP à la porte d\'immeuble', who: ['binome'] },
+  SECURITE: { label: 'Binôme de sécurité : ARI capelé, en attente au pied de l\'immeuble', who: ['binome'] },
+  SAUVETAGE_SP: { label: 'SAUVETAGE DU BINÔME EN DÉTRESSE', who: ['binome'] },
   REPLI: { label: 'Repli au pied de l\'immeuble', who: ['binome'] },
   PA_R4: { label: 'Mise en station, sauvetage du voisin du R+4 par la façade', who: ['echelle'] },
   PA_CH1: { label: 'Mise en station, sauvetage par la fenêtre de la chambre 1 (R+3)', who: ['echelle'] },
   PA_RECO: { label: 'Reconnaissance de la façade', who: ['echelle'] },
+  PA_PROTEC: { label: 'Lance sur échelle en protection de la façade (R+4)', who: ['echelle'] },
   PEC: { label: 'Prise en charge des victimes au pied de l\'immeuble', who: ['vsav'] },
 };
 function availableMissions(a) {
@@ -208,6 +258,13 @@ function availableMissions(a) {
     if (k === 'EXUTOIRE' && isOpen('EXUTOIRE')) continue;
     if (k === 'PA_CH1' && !(G.K.facts.victime_lieu)) continue;
     if (k === 'PEC' && a.pec) continue;
+    if (k === 'ATTAQUE_R4' && !(G.r4.t0 != null && !G.r4.out)) continue;
+    if (k === 'DEBLAI' && !(G.W.smoulder.length || G.W.fires.some(f => f.out) || G.r4.out)) continue;
+    if (k === 'VPP' && (G.W.vpp || G.vppPlanned)) continue;
+    if (a.kind === 'echelle' && (G.vpos.PA === 'transit' || G.vpos.PA === 'angle' || G.moves.PA)) continue;   // hors de portee de la facade
+    if (k === 'SAUVETAGE_SP' && !G.actors.some(x => x.distress && !x.distress.rescuer && x !== a)) continue;
+    if (a.distress) continue;
+    if (k === 'SECURITE' && a.mission === 'SECURITE') continue;
     list.push(k);
   }
   return list;
@@ -215,23 +272,69 @@ function availableMissions(a) {
 function order(a, key, opts) {
   opts = opts || {};
   if (a.loc === 'ABSENT') return;
+  if (a.distress) return;
   if (a.carry) { radio(`CA ${a.engin}`, 'CDG', `${a.label} en cours d'extraction d'une victime, ordre impossible.`); return; }
   const m = MISSIONS[key];
   const caName = a.kind === 'binome' ? `CA ${a.engin}` : `CA ${a.engin}`;
   let txt = m.label;
   if (key === 'ATTAQUE') txt += ` (${opts.lance || 'LDV 500'})`;
   if (key === 'RECHERCHE' && opts.priority) txt += `, en priorité ${opts.priority === 'CH1' ? 'la chambre au fond à droite' : ROOM_NAMES[opts.priority]}`;
-  radio('CDG', caName, `${a.kind === 'binome' ? a.label + ' : ' : ''}${txt}.`, 'ordre');
+  if (!opts.viaCA) radio('CDG', caName, `${a.kind === 'binome' ? a.label + ' : ' : ''}${txt}.`, 'ordre', CANAUX.TAC);
   a.mission = key; a.missionOpts = opts; a.plan = []; a.flowing = false; a.searching = null;
+  if (opts.consignes) a.cons = opts.consignes;
   if (a.kind === 'binome') planBinome(a, key, opts);
   else if (a.kind === 'echelle') planPA(a, key);
   else if (a.kind === 'vsav') { a.pec = true; a.status = 'Prise en charge des victimes au pied de l\'immeuble'; }
+  // l'ordre passe par le chef d'agres : quelques secondes avant que le binome ne parte
+  if (a.kind === 'binome') {
+    const ap = a.loc === 'RUE' ? approachDelay(a) : 0;
+    a.plan.unshift({ type: 'act', d: 8 + ap, label: ap > 20 ? 'Ordre reçu, marche d\'approche depuis l\'engin' : 'Ordre transmis par le chef d\'agrès', fn: null });
+  }
   G.dirty = true;
-  setTimeout(() => radio(caName, 'CDG', 'Reçu.'), 400);
+}
+// Ordre au chef d'agres (format SMES) : le CA collationne puis repartit les missions entre ses binomes.
+function orderCA(engin, list, cons) {
+  if (G.ended) return null;
+  list = list.filter(e => e.mission);
+  if (!list.length) return null;
+  const actors = list.map(e => G.actors.find(x => x.id === e.id)).filter(Boolean);
+  const caName = 'CA ' + engin;
+  const consTxt = [];
+  if (cons.lance) consTxt.push('établissement en eau avant toute ouverture de porte');
+  if (cons.cr) consTxt.push('compte rendu à l\'arrivée au palier');
+  if (cons.ari) consTxt.push('sortie à 100 bar, pas d\'attente du sifflet');
+  const mis = list.map(e => { const a = G.actors.find(x => x.id === e.id); return `${a.id.replace(/\d/, '')} : ${MISSIONS[e.mission].label.toLowerCase().replace(/r\+(\d)/g, 'R+$1').replace('ldv', 'LDV').replace('vpp', 'VPP')}${e.opts && e.opts.lance ? ' (' + e.opts.lance + ')' : ''}`; });
+  radio('CDG', caName, `ORDRE — Situation : ${shortSituation()}. Missions : ${mis.join(' ; ')}. Sécurité : ${consTxt.join(', ') || 'aucune consigne'}.`, 'ordre', CANAUX.TAC);
+  G.orderLog.push({ t: G.W.t, engin, list, cons });
+  const engage = list.some(e => ['ATTAQUE', 'RECHERCHE', 'R4', 'EXUTOIRE', 'DEBLAI', 'CONTROLE', 'ATTAQUE_R4', 'PALIERE'].includes(e.mission));
+  const secuDispo = G.actors.some(x => x.kind === 'binome' && (x.mission === 'SECURITE' || (list.find(e => e.id === x.id) || {}).mission === 'SECURITE'));
+  G.timers.push({ t: G.W.t + 6, fn: () => {
+    radio(caName, 'CDG', `Je collationne : ${mis.join(' ; ')}.`, 'cr', CANAUX.TAC);
+    for (const e of list) { const a = G.actors.find(x => x.id === e.id); if (a) order(a, e.mission, Object.assign({}, e.opts || {}, { viaCA: true, consignes: cons })); }
+    const idleAll = G.actors.filter(x => x.kind === 'binome' && x.loc === 'RUE' && !x.mission && !x.distress && !list.some(e => e.id === x.id));
+    const idle = idleAll.find(x => x.engin === engin);
+    if (engage && !secuDispo && idle && !G.secuHint) {
+      G.secuHint = true;
+      radio(caName, 'CDG', `Le ${idle.id.replace(/\d/, '')} ${idle.engin} reste disponible au pied de l'engin. Je le passe en binôme de sécurité, ARI capelé ?`, 'alerte', CANAUX.TAC);
+    } else if (engage && !secuDispo && !idle && !G.secuAsked) {
+      G.secuAsked = true;
+      radio(caName, 'CDG', 'Je n\'ai plus de binôme disponible en sécurité au pied de l\'immeuble. Qui assure la sécurité des binômes engagés ?', 'alerte', CANAUX.TAC);
+      if (!idleAll.length) penalty(4, 'Binômes engagés sous ARI sans binôme de sécurité désigné.');
+    }
+  } });
+  G.dirty = true;
+  return true;
+}
+function shortSituation() {
+  const f = G.K.facts;
+  return `feu d'appartement au R+3${f.feu_sejour ? ', séjour' : ''}${f.victime_existe ? ', une personne présumée à l\'intérieur' : ''}${f.cage_enfumee ? ', cage enfumée' : ''}`;
 }
 function planBinome(a, key, o) {
   const P = a.plan;
   const toR3 = () => { P.push({ type: 'move', to: 'CAGE_R3', hose: true }); };
+  a.effort = 1;
+  if (['ATTAQUE', 'RECHERCHE', 'PALIERE', 'R4', 'EXUTOIRE', 'DEBLAI', 'CONTROLE', 'ATTAQUE_R4', 'SAUVETAGE_SP'].includes(key) && !a.ari && a.loc === 'RUE')
+    P.push({ type: 'act', d: 45, label: 'Capelage ARI, contrôle de pression et engagement', fn: () => { a.ari = true; a.engT = G.W.t; a.p0 = a.air; } });
   if (key === 'ATTAQUE') {
     a.lance = o.lance || 'LDV 500';
     a.status = `Établissement ${a.lance} par la cage`;
@@ -249,7 +352,31 @@ function planBinome(a, key, o) {
   } else if (key === 'EXUTOIRE') {
     P.push({ type: 'move', to: 'TOIT' }); P.push({ type: 'act', d: 15, label: "Ouverture de l'exutoire", fn: () => { setOpen('EXUTOIRE', true); report(a, `Exutoire ouvert en tête de cage.${isOpen('IMMEUBLE') ? '' : " La porte d'immeuble est fermée : peu d'amenée d'air."}`); } });
   } else if (key === 'ALIM') {
-    P.push({ type: 'act', d: 160, label: 'Établissement sur le PI', fn: () => { G.alim = true; report(a, 'FPT alimenté sur le PI.'); } });
+    P.push({ type: 'act', d: 210, label: 'Établissement sur le PI', fn: () => { G.alim = true; report(a, 'FPT alimenté sur le PI.'); } });
+  } else if (key === 'DEBLAI') {
+    a.lance = a.lance || 'LDV 250';
+    toR3(); P.push({ type: 'deblai' });
+  } else if (key === 'CONTROLE') {
+    P.push({ type: 'move', to: 'CAGE_R3' }); P.push({ type: 'controle' });
+  } else if (key === 'ATTAQUE_R4') {
+    a.lance = o.lance || 'LDV 500';
+    a.status = `Établissement ${a.lance} au R+4`;
+    P.push({ type: 'move', to: 'CAGE_R4', hose: true }); P.push({ type: 'move', to: 'R4_APT' }); P.push({ type: 'attackR4' });
+  } else if (key === 'VPP') {
+    G.vppPlanned = true;
+    P.push({ type: 'move', to: 'RUE' });
+    P.push({ type: 'act', d: 150, label: 'Mise en place du VPP devant la porte d\'immeuble', fn: () => startVPP(a) });
+  } else if (key === 'SECURITE') {
+    if (a.loc !== 'RUE') P.push({ type: 'move', to: 'RUE' });
+    if (!a.ari) P.push({ type: 'act', d: 45, label: 'Capelage ARI', fn: () => { a.ari = true; } });
+    P.push({ type: 'standby', label: 'Binôme de sécurité : en attente au pied de l\'immeuble, ARI capelé' });
+  } else if (key === 'SAUVETAGE_SP') {
+    const vic = G.actors.find(x => x.distress && !x.distress.rescuer && x !== a);
+    if (vic) {
+      vic.distress.rescuer = a.id; vic.distress.engagedT = G.W.t; a.lance = a.lance || 'LDV 500';
+      G.journal.push({ t: G.W.t, text: `${a.label} (${a.engin}) engagé au sauvetage du binôme en détresse.` });
+      P.push({ type: 'move', to: vic.loc }); P.push({ type: 'rescueSP', vic });
+    }
   } else if (key === 'REPLI') {
     P.push({ type: 'move', to: 'RUE' }); P.push({ type: 'act', d: 1, label: '', fn: () => report(a, 'Binôme au pied de l\'immeuble.') });
   }
@@ -270,6 +397,7 @@ function planPA(a, key) {
     else report(a, 'Fenêtre de la chambre 1 ouverte, pas de victime.');
     G.K.rooms.CH1 = snapshotRoom('CH1');
   } });
+  if (key === 'PA_PROTEC') P.push({ type: 'act', d: 90, label: 'Établissement de la lance sur l\'échelle', fn: () => { a.protec = true; report(a, 'Lance en manœuvre sur l\'échelle, protection de la façade au droit du R+4.'); } });
   if (key === 'PA_RECO') P.push({ type: 'act', d: 60, label: 'Reconnaissance façade', fn: () => {
     know('feu_sejour', 'Feu localisé au séjour (côté rue)'); know('voisin_r4', 'Voisin du R+4 à sa fenêtre');
     const b = G.W.O.filter(o => o.glass && o.broken).length;
@@ -284,7 +412,19 @@ function contactR4(a) {
   else if (v.mode === 'confine') report(a, 'R+4 : occupant déjà confiné.');
   else report(a, 'R+4 : personne dans le logement, porte ouverte.');
 }
+function crIcon(text) {
+  const t = text.toLowerCase();
+  if (/détresse|difficulté|brûl|blessé|projeté|repli d'urgence/.test(t)) return 'alerte';
+  if (/victime|silhouette|occupant|voisin/.test(t)) return 'victime';
+  if (/reprise|flammes au|embras|j'attaque|feu en cours|feu actif/.test(t)) return 'feu';
+  if (/point chaud|points chauds/.test(t)) return 'chaud';
+  if (/terminé|abattu|reçu|alimenté|fermée|ouvert|reconditionné|disponible|aucun point chaud/.test(t)) return 'ok';
+  if (/fumée|enfum|chaleur/.test(t)) return 'fumee';
+  return 'info';
+}
 function report(a, text) {
+  a.lastCR = { t: G.W.t, text, icon: crIcon(text) };
+  G.crFeed.unshift({ t: G.W.t, id: a.id, text, icon: a.lastCR.icon });
   radio(a.kind === 'binome' ? `CA ${a.engin}` : a.engin, 'CDG', (a.kind === 'binome' ? `${a.label} : ` : '') + text, 'cr');
 }
 
@@ -299,7 +439,9 @@ function snapshotRoom(r) {
   const T = z.Tu - 273;
   let heat = T > 400 ? 'chaleur extrême' : T > 200 ? 'forte chaleur' : T > 80 ? 'chaleur sensible' : 'pas de chaleur notable';
   const onFire = roomOnFire(G.W, r);
-  const fire = onFire ? (z.flashed ? 'embrasement généralisé' : 'feu en cours') : (G.W.fires.some(f => f.zone === r) ? 'feu éteint' : '');
+  const resid = hasResidual(G.W, r, true);
+  const rep = G.W.fires.some(f => f.zone === r && !f.out && f.kind === 'reprise');
+  const fire = onFire ? (rep ? 'reprise de feu sous les débris' : z.flashed ? 'embrasement généralisé' : 'feu en cours') : resid ? 'flammes abattues, foyers résiduels sous les débris' : (G.W.fires.some(f => f.zone === r) ? 'feu éteint, déblayé' : '');
   const v = G.victims.find(v => v.loc === r && !v.atRue && !v.carried);
   return { t: G.W.t, smoke, heat, fire, onFire, T, zr, sev: onFire ? 3 : T > 200 ? 2 : zr < 1.2 ? 1.5 : zr < 2.3 ? 1 : 0, victim: v ? v.id : null };
 }
@@ -321,11 +463,24 @@ function tickActor(a, dt) {
   const zo = zoneOf(a.loc);
   // air (ARI) et exposition
   if (a.kind === 'binome') {
-    if (zo || a.loc === 'TOIT' || a.loc === 'R4_APT') a.air -= dt * (a.carry ? 1.6 : 1);
+    if (zo || a.loc === 'TOIT' || a.loc === 'R4_APT') a.air -= dt * (a.carry ? 1.6 : (a.effort || 1)) * (a.distress && a.distress.type === 'ari' && !a.distress.out ? 6 : 1);
+    if (a.loc === 'R4_APT') exposureR4(a, dt);
     if (zo) exposure(a, dt, zo);
+    if (a.distress && !a.distress.out) { a.flowing = a.distress.type !== 'perdu' && !!a.lance && waterOK() && !!zo && zo.zone !== 'CAGE'; a.status = 'DÉTRESSE'; return; }   // l'equipier valide garde la lance en protection
+    const seuil = a.cons && a.cons.ari ? 500 : 300;
+    if (a.air <= seuil && !a.lowAir && a.loc !== 'RUE' && !a.carry && seuil === 500) {
+      a.lowAir = true; report(a, 'Pression à 100 bar, je ressors comme prévu.');
+      a.plan = [{ type: 'move', to: 'RUE' }, { type: 'act', d: 300, label: 'Changement de bouteille et réhydratation', fn: () => { a.air = 1500; a.lowAir = false; a.engT = null; report(a, 'Binôme reconditionné, disponible.'); } }, { type: 'done' }];
+      if (['ATTAQUE', 'DEBLAI', 'ATTAQUE_R4', 'RECHERCHE', 'CONTROLE'].includes(a.mission)) G.journal.push({ t: G.W.t, text: `${a.label} (${a.engin}) sort à 100 bar : mission « ${MISSIONS[a.mission].label.toLowerCase()} » à reprendre par la relève.` });
+      a.mission = null; a.established = false; a.flowing = false; G.dirty = true;
+    }
     if (a.air <= 300 && !a.lowAir && a.loc !== 'RUE') {
+      // sifflet sans consigne de sortie anticipee : c'est la que les binomes se perdent
+      if (G.incident && G.incident.state === 'pending' && zoneOf(a.loc) && conditionsAt(G.W, zoneOf(a.loc).zone, 1.0).vis < 2) { G.incident.type = 'perdu'; triggerIncident(a); return; }
       a.lowAir = true; report(a, 'Sifflet de fin de bouteille, je me replie.');
-      a.plan = [{ type: 'move', to: 'RUE' }, { type: 'act', d: 120, label: 'Changement de bouteille', fn: () => { a.air = 1500; a.lowAir = false; report(a, 'Binôme reconditionné, disponible.'); } }, { type: 'done' }];
+      a.plan = [{ type: 'move', to: 'RUE' }, { type: 'act', d: 300, label: 'Changement de bouteille et réhydratation', fn: () => { a.air = 1500; a.lowAir = false; a.engT = null; report(a, 'Binôme reconditionné, disponible.'); } }, { type: 'done' }];
+      if (a.mission === 'ATTAQUE' || a.mission === 'DEBLAI' || a.mission === 'ATTAQUE_R4') G.journal.push({ t: G.W.t, text: `${a.label} (${a.engin}) en fin de bouteille : sa mission « ${MISSIONS[a.mission].label.toLowerCase()} » est interrompue, relève à organiser.` });
+      a.mission = null; a.established = false;
       a.flowing = false; G.dirty = true;
     }
   }
@@ -341,10 +496,15 @@ function tickActor(a, dt) {
   }
   if (s.type === 'search') return doSearch(a, s, dt);
   if (s.type === 'attack') return doAttack(a, s, dt);
+  if (s.type === 'deblai') return doDeblai(a, s, dt);
+  if (s.type === 'standby') { a.status = s.label; a.flowing = false; return; }
+  if (s.type === 'rescueSP') return doRescueSP(a, s, dt);
+  if (s.type === 'controle') return doControle(a, s, dt);
+  if (s.type === 'attackR4') return doAttackR4(a, s, dt);
   if (s.type === 'carry') return doCarry(a, s);
   if (s.type === 'drop') return doDrop(a, s);
   if (s.type === 'done') {
-    a.plan.shift(); a.mission = null; a.flowing = false;
+    a.plan.shift(); a.mission = null; a.flowing = false; a.effort = 1;
     a.status = a.loc === 'RUE' ? 'Disponible au pied de l\'engin' : `Disponible (${locName(a.loc)})`;
     if (a.kind !== 'binome') a.status = 'Mission terminée, disponible';
     G.dirty = true;
@@ -360,7 +520,7 @@ function doMove(a, s, dt) {
   if (s.i >= s.path.length - 1) { a.plan.shift(); a.next = null; return; }
   const from = s.path[s.i], to = s.path[s.i + 1];
   let d = edgeTime(from, to) * smokeFactor(to);
-  if (s.hose && !a.established && to.startsWith('CAGE_')) d += 18;      // etablissement dans l'escalier
+  if (s.hose && !a.established && to.startsWith('CAGE_')) d += 40;      // etablissement dans l'escalier (tuyaux, ARI)
   if (a.carry) d *= 1.7;
   a.next = to; a.prog = s.p / d;
   a.status = `${a.carry ? 'Extraction de la victime' : 'Progression'} vers ${locName(s.to)}`;
@@ -370,17 +530,18 @@ function doMove(a, s, dt) {
     if (from === 'RUE' && to === 'CAGE_RDC' && !isOpen('IMMEUBLE')) setOpen('IMMEUBLE', true);
   }
   const zh = zoneOf(a.loc);
-  if (a.lance && (a.mission === 'ATTAQUE' || a.mission === 'RECHERCHE') && zh && zh.zone !== 'CAGE')
+  if (a.lance && (a.mission === 'ATTAQUE' || a.mission === 'RECHERCHE' || a.mission === 'SAUVETAGE_SP') && zh && zh.zone !== 'CAGE')
     a.flowing = waterOK() && G.W.Z[zh.zone].Tu > 473;
   s.p += dt;
   if (s.p >= d) {
     s.p = 0; s.i++; a.loc = to; G.dirty = true;
-    if (s.hose && to === 'CAGE_R3') a.established = true;
+    if (s.hose && (to === 'CAGE_R3' || to === 'CAGE_R4')) a.established = true;
     onArrive(a, to);
   }
 }
 function openDoorBy(a, door) {
   const o = G.W.O.find(x => x.id === door);
+  if (a.cons && a.cons.lance && a.lance && waterOK()) a.flowing = true;   // consigne : lance en eau avant ouverture
   const inside = G.W.Z[o.a];
   if (inside.Tu > 700 && inside.MFuel > 0.3 && !(a.lance && waterOK())) {
     penalty(15, `${a.label} (${a.engin}) a ouvert une porte sur un volume sous-ventilé sans lance en eau.`);
@@ -399,6 +560,12 @@ function onArrive(a, loc) {
     if (loc === 'SEJ' && snap.onFire) know('feu_sejour', 'Feu localisé au séjour');
     know('layout', 'Disposition de l\'appartement');
   }
+  if (loc === 'CAGE_R3' && a.cons && a.cons.cr && !a.crPalier && a.kind === 'binome') {
+    a.crPalier = true;
+    const c3 = conditionsAt(G.W, 'CAGE', 3 * 2.6 + 1.5), pal = isOpen('PALIERE');
+    report(a, `Arrivé au palier du R+3 : visibilité ${c3.vis < 1 ? 'nulle' : Math.round(c3.vis) + ' m'}, ${Math.round(c3.T - 273)} °C, porte palière ${pal ? 'ouverte, fumées qui sortent en partie haute' : 'fermée, chaude au toucher'}.`);
+    if (pal) know('porte_ouverte', 'Porte palière restée ouverte');
+  }
   if (loc.startsWith('CAGE_')) {
     const lv = loc.slice(5), c = conditionsAt(G.W, 'CAGE', LEVELS.indexOf(lv) * 2.6 + 1.5);
     G.K.cage[lv] = { t: G.W.t, vis: c.vis, T: c.T - 273 };
@@ -414,7 +581,7 @@ function onArrive(a, loc) {
 }
 function doSearch(a, s, dt) {
   if (a.loc !== s.room) { a.plan.unshift({ type: 'move', to: s.room }); return; }
-  if (s.t == null) { s.t = 0; s.d = 25 * smokeFactor(s.room); }
+  if (s.t == null) { s.t = 0; s.d = 40 * smokeFactor(s.room); }
   a.status = `Recherche : ${ROOM_NAMES[s.room]}`;
   // lance en protection : on refroidit si la chaleur l'impose
   const z = G.W.Z[s.room];
@@ -423,7 +590,9 @@ function doSearch(a, s, dt) {
   if (s.t >= s.d) {
     a.plan.shift();
     const snap = snapshotRoom(s.room); G.K.rooms[s.room] = snap;
-    const v = G.victims.find(x => x.loc === s.room && !x.atRue && !x.carried);
+    let v = G.victims.find(x => x.loc === s.room && !x.atRue && !x.carried);
+    // dans une fumee opaque, une recherche a tatons peut passer a cote d'une victime
+    if (v && !v.found && conditionsAt(G.W, s.room, 1.0).vis < 1 && G.rng() < 0.3) { v.missed = (v.missed || 0) + 1; G.journal.push({ t: G.W.t, text: `${a.label} (${a.engin}) n'a pas trouvé la victime présente dans ${ROOM_NAMES[s.room].toLowerCase()} (fumée opaque).` }); v = null; }
     if (v) {
       v.found = true;
       report(a, `${roomReportText(s.room, snap)} Victime découverte : ${vState(v).s.toLowerCase()}. J'extrais.`);
@@ -451,7 +620,8 @@ function doAttack(a, s, dt) {
   const zFire = ROOMS.filter(r => roomOnFire(G.W, r) || (hasFire(G.W, r) && G.W.Z[r].fireQ > 30));
   if (!zFire.length) {
     a.plan.shift(); a.flowing = false;
-    report(a, 'Feu éteint. Je procède à la reconnaissance des autres pièces.');
+    const res = G.W.smoulder.filter(x => !x.done).map(x => ROOM_NAMES[x.zone]);
+    report(a, `Flammes abattues${res.length ? ` (${res.join(', ')}) : il reste des braises et des points chauds sous les débris, fumées encore épaisses. Déblai à prévoir` : ''}. Je reconnais les autres pièces.`);
     const todo = ['CH1', 'CH3', 'CH2', 'SDB', 'CUI', 'SEJ', 'COU'].filter(r => !(G.K.rooms[r] && G.W.t - G.K.rooms[r].t < 30));
     a.plan = [...todo.map(r => ({ type: 'search', room: r })), ...a.plan];
     G.dirty = true; return;
@@ -466,7 +636,237 @@ function doAttack(a, s, dt) {
   a.flowing = true; a.status = `Attaque ${a.lance} : ${ROOM_NAMES[target]}`;
   if (!s.announced) { s.announced = true; report(a, `${roomReportText(target, snapshotRoom(target))} J'attaque.`); }
 }
+// ---- incidents de securite (binome en detresse)
+const INCIDENTS = {
+  malaise: { delai: 600, msg: 'un équipier a fait un malaise, il est au sol, je ne peux pas le sortir seul', lesion: 'coup de chaleur, conscience altérée' },
+  ari: { delai: 240, msg: 'défaillance du détendeur, mon ARI fuit, la pression chute très vite', lesion: 'intoxication aux fumées' },
+  perdu: { delai: 420, msg: 'nous sommes désorientés dans la fumée, nous avons perdu le tuyau, je ne sais plus où est la sortie', lesion: 'épuisement, intoxication aux fumées' },
+};
+function triggerIncident(a) {
+  const I = G.incident, d = INCIDENTS[I.type];
+  I.state = 'active'; I.actor = a.id; I.t = G.W.t;
+  a.distress = { type: I.type, t: G.W.t, deadline: G.W.t + d.delai, rescuer: null };
+  a.plan = []; a.mission = null; a.flowing = false; a.carry && (a.carry.carried = null, a.carry = null);
+  G.distressLog.push({ t: G.W.t, text: `Détresse ${a.label} (${a.engin}) : ${d.msg}.` });
+  G.journal.push({ t: G.W.t, text: `DÉTRESSE : ${a.label} (${a.engin}), ${locName(a.loc)} — ${d.msg}.` });
+  a.lastCR = { t: G.W.t, text: `DÉTRESSE — ${locName(a.loc)} : ${d.msg}.`, icon: 'alerte' };
+  G.crFeed.unshift({ t: G.W.t, id: a.id, text: a.lastCR.text, icon: 'alerte' });
+  radio(`${a.label} ${a.engin}`, 'CA ' + a.engin, `DÉTRESSE, DÉTRESSE, DÉTRESSE — ${locName(a.loc)} : ${d.msg}.`, 'urgent', CANAUX.ARI);
+  G.timers.push({ t: G.W.t + 8, fn: () => radio('CA ' + a.engin, 'CDG', `Message de détresse de mon ${a.label.toLowerCase()} sur la DIR 654, ${locName(a.loc)}. ${G.actors.some(x => x.mission === 'SECURITE') ? 'Le binôme de sécurité est prêt.' : 'Je n\'ai pas de binôme de sécurité.'}`, 'urgent', CANAUX.TAC) });
+  G.dirty = true;
+}
+function updateIncident(dt) {
+  const I = G.incident; if (!I) return;
+  if (I.state === 'pending' && G.W.t >= I.at) {
+    const cand = G.actors.filter(x => x.kind === 'binome' && !x.hurt && !x.distress && (ROOMS.includes(x.loc) || x.loc === 'CAGE_R3' || x.loc === 'R4_APT') && x.ari
+      && !(I.type === 'perdu' && ROOMS.includes(x.loc) && roomOnFire(G.W, x.loc)));
+    if (cand.length) triggerIncident(cand[Math.floor(G.rng() * cand.length)]);
+    else I.at = G.W.t + 60;
+  }
+  if (I.state !== 'active') return;
+  const a = G.actors.find(x => x.id === I.actor);
+  if (a.distress && !a.distress.late && G.W.t > a.distress.deadline) {
+    a.distress.late = true;
+    G.journal.push({ t: G.W.t, text: `Le sapeur-pompier en détresse (${a.label}, ${a.engin}) n'est toujours pas secouru : son état devient grave.` });
+    radio('CA ' + a.engin, 'CDG', `Plus de réponse de mon ${a.label.toLowerCase()} sur la DIR 654 !`, 'urgent', CANAUX.TAC);
+  }
+}
+function doRescueSP(a, s, dt) {
+  const vic = s.vic;
+  a.flowing = !!a.lance && waterOK() && ROOMS.includes(a.loc) && G.W.Z[a.loc].Tu > 373;   // progression et prise en charge sous protection de la lance
+  if (s.t == null) { s.t = 0; s.d = vic.distress.type === 'perdu' ? 75 : 20; a.status = vic.distress.type === 'perdu' ? 'Recherche du binôme perdu en suivant le tuyau' : 'Prise en charge du binôme en détresse'; }
+  s.t += dt;
+  if (s.t < s.d) return;
+  a.plan.shift();
+  vic.distress.foundT = G.W.t;
+  report(a, `Binôme en détresse retrouvé (${locName(vic.loc)}). Nous ressortons avec lui.`);
+  // le binome secouru sort avec ses sauveteurs
+  const exit = { type: 'move', to: 'RUE' };
+  a.plan = [exit, { type: 'act', d: 1, label: '', fn: () => spOut(vic, a) }, { type: 'done' }, ...a.plan];
+  vic.plan = [{ type: 'move', to: 'RUE' }]; vic.distress.out = true; vic.escort = a.id;
+  G.dirty = true;
+}
+function spOut(vic, a) {
+  const d = vic.distress, late = G.W.t > d.deadline;
+  d.outT = G.W.t; d.grave = late || d.type === 'ari' && G.W.t - d.t > d.deadline - d.t - 30;
+  vic.distress = null; vic.hurt = true; vic.mission = null; vic.plan = []; vic.loc = 'RUE';
+  const inc = G.incident; inc.state = 'resolved'; inc.outT = G.W.t; inc.grave = d.grave; inc.rescuer = a.id; inc.engagedT = d.engagedT;
+  G.victims.push({ id: 'SP', sp: true, name: `Sapeur-pompier du ${vic.label.toLowerCase()} (${vic.engin})`, loc: 'RUE', atRue: true, fed: d.grave ? 1.2 : 0.4, found: true, pec: false, lesion: INCIDENTS[d.type].lesion, grave: d.grave });
+  report(a, `Équipier en détresse sorti au pied de l'immeuble, ${d.grave ? 'inconscient' : 'conscient, choqué'}. Prise en charge VSAV demandée.`);
+  G.journal.push({ t: G.W.t, text: `Sapeur-pompier en détresse sorti à ${hhmm(G.W.t)} (${fmtDur(G.W.t - inc.t)} après l'alerte)${d.grave ? ', état grave' : ''}.` });
+  G.dirty = true;
+}
+// message urgent / prioritaire (detresse, accident, demande immediate)
+function sendUrgent(text, canal) {
+  if (G.ended || !text) return;
+  G.urgents.push({ t: G.W.t, text, canal });
+  radio('CDG', 'CODIS', 'MESSAGE URGENT. ' + text, 'urgent', canal);
+  const req = [];
+  if (/smur|medic/i.test(text) && !G.requests.SMUR) req.push('SMUR');
+  if (/vsav/i.test(text) && !G.requests.VSAV2) req.push('VSAV2');
+  if (/fpt|renfort|binome|binôme/i.test(text) && !G.requests.FPT2) req.push('FPT2');
+  requestRenforts(req);
+  if (canal !== CANAUX.CDT && canal !== CANAUX.OPE) G.chanErr++;
+  G.dirty = true;
+}
+// victimes : medicalisation et evacuation (sans alourdir l'intervention)
+function victimAction(vid, act) {
+  const v = G.victims.find(x => x.id === vid); if (!v || G.ended) return;
+  if (act === 'smur') { if (!G.requests.SMUR) { radio('CDG', 'CODIS', `Demande de SMUR pour ${v.name}.`, 'msg'); requestRenforts(['SMUR']); } v.smurAsked = G.W.t; }
+  if (act === 'evac') {
+    const vs = G.actors.find(x => x.kind === 'vsav' && x.loc === 'RUE' && x.id === v.pecBy) || G.actors.find(x => x.kind === 'vsav' && x.loc === 'RUE');
+    if (!vs) return;
+    const smurOn = G.requests.SMUR && G.requests.SMUR.onSite;
+    v.evac = { t: G.W.t, by: vs.id, medic: !!smurOn, dest: v.fed >= 1 || v.grave ? 'CHU Pellegrin (déchocage)' : 'CHU Pellegrin (urgences)' };
+    if ((v.fed >= 1 || v.grave) && !smurOn) penalty(10, `${v.name} en urgence absolue évacué(e) sans médicalisation.`);
+    vs.loc = 'ABSENT'; vs.status = 'Évacuation vers ' + v.evac.dest; vs.pec = false;
+    radio(vs.engin, 'CDG', `Je quitte les lieux avec ${v.name} vers ${v.evac.dest}${v.evac.medic ? ', médicalisé par le SMUR' : ''}.`, 'cr', CANAUX.TAC);
+    G.journal.push({ t: G.W.t, text: `${v.name} évacué(e) par ${vs.engin} vers ${v.evac.dest}.` });
+  }
+  G.dirty = true;
+}
+// ---- deblai, controle, ventilation, feu du R+4
+function burntRooms() { return [...new Set(G.W.fires.map(f => f.zone))]; }
+function doDeblai(a, s, dt) {
+  const W = G.W;
+  a.effort = 1.5;
+  const flames = ROOMS.filter(r => hasFire(W, r));
+  const target = W.smoulder.find(x => !x.done && (x.visible || x.found) && !roomOnFire(W, x.zone));
+  if (!target && G.r4.out && !G.r4.deblaye) {
+    if (a.loc !== 'R4_APT') { a.plan.unshift({ type: 'move', to: 'R4_APT' }); return; }
+    if (!waterOK()) { a.flowing = false; a.status = 'Déblai : lance à sec'; return; }
+    s.t4 = (s.t4 || 0) + dt; a.flowing = s.t4 % 40 < 18;
+    a.status = `Déblai : séjour du R+4 (${Math.round(100 * s.t4 / 300)} %)`;
+    if (s.t4 >= 300) { G.r4.deblaye = true; s.n = (s.n || 0) + 1; report(a, 'Déblai terminé au R+4.'); G.dirty = true; }
+    return;
+  }
+  if (!target) {
+    if (flames.length) { a.status = `Déblai en attente : feu encore actif (${flames.map(r => ROOM_NAMES[r]).join(', ')})`; a.flowing = false; return; }
+    a.plan.shift(); a.flowing = false;
+    report(a, s.n ? `Déblai terminé (${s.n} foyer(s)). Plus de foyer apparent à l'œil nu.` : 'Pas de foyer résiduel apparent.');
+    G.dirty = true; return;
+  }
+  if (a.loc !== target.zone) { a.plan.unshift({ type: 'move', to: target.zone }); return; }
+  if (!waterOK()) { a.flowing = false; a.status = 'Déblai : lance à sec'; return; }
+  if (s.cur !== target) { s.cur = target; s.t = 0; s.d = clamp(100 + target.mj * 0.45, 150, 420); }
+  a.flowing = s.t % 40 < 18;                 // noyage par impulsions
+  a.status = `Déblai : ${ROOM_NAMES[target.zone]} (${Math.round(100 * s.t / s.d)} %)`;
+  s.t += dt;
+  if (s.t >= s.d) {
+    target.done = true; target.deblaye = true; s.n = (s.n || 0) + 1; s.cur = null;
+    G.K.rooms[target.zone] = snapshotRoom(target.zone);
+    report(a, target.visible ? `Déblai terminé : ${ROOM_NAMES[target.zone]}, débris noyés et dégarnis.` : `Point chaud traité : ${target.where} ouvert(e) à la hache et noyé(e).`);
+    G.dirty = true;
+  }
+}
+function doControle(a, s, dt) {
+  // Reconnaissance a la camera thermique : localise le foyer a travers les fumees, repere les victimes,
+  // et revele les points chauds caches (cloisons, doublages, faux plafonds) invisibles a l'oeil.
+  const W = G.W;
+  if (!s.list) { s.list = ['COU', 'SEJ', 'CUI', 'CH1', 'CH2', 'SDB', 'CH3']; s.i = 0; s.t = 0; s.hot = []; s.seen = []; }
+  if (s.i >= s.list.length) {
+    a.plan.shift();
+    const flames = ROOMS.some(r => roomOnFire(W, r));
+    if (!flames && !hasResidual(W) && (G.r4.t0 == null || G.r4.deblaye)) { G.controle = W.t; report(a, 'Reconnaissance à la caméra thermique terminée : aucun point chaud, ni dans les débris, ni dans les cloisons, ni au plafond.'); }
+    else report(a, `Caméra thermique : ${[s.seen.length ? 'feu actif : ' + s.seen.join(', ') : '', s.hot.length ? 'points chauds : ' + s.hot.join(' ; ') : ''].filter(Boolean).join(' — ') || 'rien de plus'}.${s.hot.length ? ' Déblai à faire sur ces points.' : ''}`);
+    G.dirty = true; return;
+  }
+  const r = s.list[s.i];
+  if (roomOnFire(W, r)) {
+    // on ne rentre pas sans lance dans un volume en feu : lecture depuis le seuil
+    if (a.loc !== 'COU' && r !== 'COU') { a.plan.unshift({ type: 'move', to: 'COU' }); return; }
+    s.seen.push(ROOM_NAMES[r]); know(r === 'SEJ' ? 'feu_sejour' : 'feu_' + r, `Foyer localisé à la caméra thermique : ${ROOM_NAMES[r]}`);
+    G.K.rooms[r] = snapshotRoom(r); s.i++; return;
+  }
+  if (a.loc !== r) { a.plan.unshift({ type: 'move', to: r }); return; }
+  a.status = `Caméra thermique : ${ROOM_NAMES[r]}`;
+  s.t += dt;
+  if (s.t >= 25) {
+    s.t = 0; s.i++;
+    G.K.rooms[r] = snapshotRoom(r); know('layout', 'Disposition de l\'appartement');
+    for (const sm of W.smoulder.filter(x => !x.done && x.zone === r)) {
+      if (!sm.visible && !sm.found) { sm.found = true; G.journal.push({ t: W.t, text: `Point chaud caché détecté à la caméra thermique dans ${sm.where}.` }); }
+      s.hot.push(`${sm.where} (${ROOM_NAMES[r].toLowerCase()}, ${sm.visible ? 'braises' : 'environ ' + Math.round(140 + sm.mj / 3) + ' °C derrière le parement'})`);
+      know('points_chauds', 'Points chauds repérés à la caméra thermique');
+    }
+    const v = G.victims.find(x => x.loc === r && !x.atRue && !x.carried && !x.found);
+    if (v) { v.found = true; report(a, `Silhouette chaude au sol dans ${ROOM_NAMES[r].toLowerCase()} : victime découverte, ${vState(v).s.toLowerCase()}. J'extrais.`); a.plan.unshift({ type: 'carry', v }); }
+    G.dirty = true;
+  }
+}
+function startVPP(a) {
+  const W = G.W;
+  W.vpp = true; G.vppT = W.t;
+  const flames = ROOMS.some(r => roomOnFire(W, r));
+  const imm = isOpen('IMMEUBLE'), exu = isOpen('EXUTOIRE');
+  report(a, `VPP en fonctionnement devant la porte d'immeuble.${!imm ? ' Porte d\'immeuble fermée : sans effet.' : ''}${!exu ? ' Exutoire fermé : pas d\'exutoire pour la cage.' : ''}`);
+  G.journal.push({ t: W.t, text: 'Ventilation opérationnelle (VPP) mise en œuvre.' });
+  if (flames && !G.actors.some(x => x.mission === 'ATTAQUE' && x.flowing)) penalty(12, 'VPP mis en œuvre sur un feu non circonscrit, sans attaque en eau : risque d\'activer le foyer.');
+}
+function flameOutWin(id) {
+  const W = G.W, o = W.O.find(x => x.id === id), z = W.Z[o.a], e = W.ext[id];
+  if (!o.open) return 0;
+  const q = (e ? e.fuelQ : 0) + (z.flashed && roomOnFire(W, o.a) && z.Tu > 700 ? z.fireQ * 0.15 : 0);
+  return q > 60 ? q : 0;
+}
+function updateR4(dt) {
+  const W = G.W, R = G.r4;
+  if (R.t0 == null) {
+    const q = flameOutWin('W_SEJ1') + flameOutWin('W_SEJ2');
+    const pa = G.actors.find(x => x.id === 'PA' && x.protec && x.mission === 'PA_PROTEC');
+    const prot = (pa && waterOK() ? 0.25 : 1) * (G.actors.some(x => x.loc === 'R4_APT' && x.lance && x.flowing) ? 0.4 : 1);
+    if (q > 0) R.exp += dt * clamp(q / 2500, 0.3, 1.2) * prot;
+    else R.exp = Math.max(0, R.exp - dt * 0.2);
+    if (R.exp > 240 && !R.warned) { R.warned = true; G.journal.push({ t: W.t, text: 'Les flammes sortant des fenêtres du séjour lèchent la façade et chauffent le vitrage du R+4.' }); }
+    if (R.exp > 660) {
+      R.t0 = W.t; G.fire.lastEvt = W.t; G.controle = null;
+      G.journal.push({ t: W.t, text: 'Propagation par la façade : le feu a gagné l\'appartement du R+4 (effet « chandelle »).' });
+      radio(G.actors.some(x => x.id === 'PA' && x.loc !== 'ABSENT') ? 'PA 18' : 'CA FPT 1', 'CDG', 'Flammes au R+4 ! Le vitrage au-dessus du séjour a cédé, le feu prend dans l\'appartement du dessus.', 'alerte');
+      know('feu_r4', 'Propagation au R+4 par la façade');
+      G.dirty = true;
+    }
+    return;
+  }
+  if (R.out) return;
+  const t = W.t - R.t0;
+  const decl = t > 1500 ? clamp(1 - (t - 1500) / 600, 0, 1) : 1;   // combustible du sejour du R+4 consomme
+  R.q = Math.min(2500, 0.03 * t * t) * R.k * decl;
+  if (decl <= 0) R.k = 0;
+  const att = G.actors.filter(x => x.loc === 'R4_APT' && x.flowing && waterOK());
+  for (const x of att) { const wq = (x.lance === 'LDV 250' ? 250 : 500) / 60 * 2600 * SIM.CFG.waterEff; R.k = Math.max(0, R.k - dt * SIM.CFG.knockCoef * wq / Math.max(500, Math.min(2500, 0.03 * t * t))); }
+  const pa = G.actors.find(x => x.id === 'PA' && x.protec && x.mission === 'PA_PROTEC');
+  if (pa && waterOK()) R.k = Math.max(0.35, R.k - dt * 0.0006);   // la lance exterieure freine sans eteindre
+  if (R.k < 0.03) {
+    R.out = true; R.q = 0; R.residual = 1; G.journal.push({ t: W.t, text: 'Feu du R+4 : flammes abattues.' });
+    for (const x of att) report(x, 'Feu du R+4 abattu. Foyers résiduels dans le séjour du R+4, déblai à prévoir.');
+    G.dirty = true;
+  }
+  const v = G.victims[1];
+  if (v.loc === 'R4_APT' && !v.atRue && R.q > 150) v.fed += dt * (R.q / 2500) * 0.012;
+}
+function exposureR4(a, dt) {
+  const R = G.r4;
+  if (R.t0 == null || R.out) return;
+  if (R.q > 800 && !(a.flowing && waterOK())) a.hazard += dt; else a.hazard = Math.max(0, a.hazard - dt * 0.5);
+  if (a.hazard > 20 && !a.hurt) {
+    a.hurt = true; penalty(30, `${a.label} (${a.engin}) exposé au feu du R+4 sans protection hydraulique : brûlures.`);
+    report(a, 'Binôme en difficulté au R+4, repli immédiat, un équipier brûlé.');
+    a.plan = [{ type: 'move', to: 'RUE' }, { type: 'done' }]; a.flowing = false; G.dirty = true;
+  }
+}
+function doAttackR4(a, s, dt) {
+  const R = G.r4;
+  if (R.out || R.t0 == null) {
+    a.plan.shift(); a.flowing = false;
+    if (R.residual && !R.deblaye) a.plan.unshift({ type: 'act', d: 240, label: 'Déblai du séjour du R+4', fn: () => { R.deblaye = true; report(a, 'Déblai terminé au R+4.'); } });
+    G.dirty = true; return;
+  }
+  if (!waterOK()) { a.flowing = false; a.status = 'LANCE À SEC'; return; }
+  a.flowing = true; a.status = `Attaque ${a.lance} : R+4`;
+  if (!s.announced) { s.announced = true; report(a, 'R+4 : séjour en feu, fumées jusqu\'au sol. J\'attaque.'); }
+}
 function exposure(a, dt, zo) {
+  if (a.distress) return;   // l'etat du binome en detresse est gere par l'incident
   const c = conditionsAt(G.W, zo.zone, zo.h);
   const T = c.T - 273;
   const protectedByWater = a.flowing && waterOK();
@@ -506,13 +906,18 @@ function tick(dt) {
     }
   }
   for (const a of G.actors) if (a.kind !== 'binome') tickActor(a, dt);
+  const paP = G.actors.find(x => x.id === 'PA' && x.protec && x.mission === 'PA_PROTEC');
+  if (paP && !G.alim) G.tank = Math.max(0, G.tank - 500 / 60 * dt);
+  updateR4(dt);
   // VSAV
-  for (const a of G.actors) if (a.kind === 'vsav' && a.pec && a.loc === 'RUE') {
-    for (const v of G.victims) if (v.atRue && !v.pec) {
+  for (const a of G.actors) if (a.kind === 'vsav' && a.pec && a.loc === 'RUE' && !G.moves[a.id]) {
+    const bilanT = 60 + (G.vpos[a.id] === 'transit' ? 90 : 0);   // brancardage depuis le point de transit
+    for (const v of G.victims) if (v.atRue && !v.pec && !v.evac) {
       v.pecT = (v.pecT || 0) + dt;
-      if (v.pecT > 60) { v.pec = true; const st = vState(v); radio(a.engin, 'CDG', `Bilan ${v.name} : ${st.s.toLowerCase()}${v.fed >= 0.3 ? ', intoxication aux fumées. Demande de médicalisation.' : ', intoxication légère.'}`, 'cr'); }
+      if (v.pecT > bilanT) { v.pec = true; v.pecBy = a.id; const st = vState(v); v.bilan = `${st.s}${v.sp ? ', ' + v.lesion : v.fed >= 0.3 ? ', intoxication aux fumées, SpO2 basse' : ', intoxication légère'}`; report(a, `Bilan ${v.name} : ${v.bilan.toLowerCase()}.${(v.sp ? v.grave : v.fed >= 0.3) ? ' Demande de médicalisation.' : ''}`); }
     }
   }
+  updateIncident(dt);
   step(W);
   updateVictims(dt);
   updateNeighbour(dt);
@@ -528,6 +933,15 @@ function onSimEvent(e) {
       if (a.flowing) penalty(5, `${a.label} (${a.engin}) exposé à un embrasement, protégé par sa lance.`);
       else { a.hurt = true; penalty(35, `${a.label} (${a.engin}) pris dans un embrasement généralisé.`); report(a, 'Embrasement ! Repli d\'urgence, binôme blessé.'); a.plan = [{ type: 'move', to: 'RUE' }, { type: 'done' }]; }
     }
+  }
+  if (e.type === 'reprise') {
+    G.fire.lastEvt = e.t; G.controle = null; G.reprises++;
+    const src = G.W.smoulder.find(x => x.reprise && x.zone === e.id && x.done && Math.abs(G.W.t - e.t) < 1);
+    G.journal.push({ t: e.t, text: `Reprise de feu : ${ROOM_NAMES[e.id] || e.id} (${src && !src.visible ? 'foyer caché dans ' + src.where + ', non détecté' : 'foyer résiduel non déblayé'}).` });
+    const here = G.actors.find(a => a.kind === 'binome' && a.loc === e.id);
+    if (here) report(here, `Reprise de feu dans ${ROOM_NAMES[e.id].toLowerCase()} ! Les braises sous les débris sont reparties.`);
+    else if (G.W.O.some(o => o.a === e.id && o.b === 'EXT' && o.open)) radio('CA FPT 1', 'CDG', `Lueurs et fumées qui reprennent au R+3 (${ROOM_NAMES[e.id].toLowerCase()}) !`, 'alerte');
+    G.dirty = true;
   }
   if (e.type === 'vitre') G.journal.push({ t: e.t, text: 'Bris de vitrage : ' + e.id });
   if (e.type === 'eteint') G.journal.push({ t: e.t, text: 'Foyer éteint : ' + (ROOM_NAMES[e.id] || e.id) });
@@ -561,8 +975,10 @@ function evalCR(f) {
   const ok = (c, good, bad, p) => { out.push({ ok: !!c, text: c ? good : bad }); if (c) pts += p; };
   const vfound = G.victims.filter(v => v.found);
   ok(!vfound.length || has(f.vois + ' ' + f.victimes, /victime|personne|ua|ur|impliqu|blesse|intox/), 'Bilan victimes transmis.', 'Victimes retrouvées non mentionnées.', 30);
-  const out1 = !ROOMS.some(r => roomOnFire(G.W, r));
-  ok(out1 ? has(f.vois, /eteint|maitris|circonscrit/) : !has(f.vois, /eteint/), out1 ? 'Situation du feu exacte (éteint / maîtrisé).' : 'Situation du feu exacte (en cours).', 'L\'état du feu annoncé ne correspond pas à la réalité.', 30);
+  const cur = G.fire.cur, said = has(f.vois, /eteint/) ? 'eteint' : has(f.vois, /maitrise/) && !has(f.vois, /non maitrise/) ? 'maitrise' : has(f.vois, /circonscrit/) ? 'circonscrit' : has(f.vois, /non maitrise|en cours|developpe|attaque|embras|feu/) ? 'actif' : null;
+  const okFire = said === cur || (said === 'actif' && (cur === 'developpement' || cur === 'non_maitrise')) || (said === 'circonscrit' && cur === 'maitrise');
+  const curL = (FIRE_STATES.find(x => x[0] === cur) || [0, ''])[1].toLowerCase();
+  ok(okFire, `Situation du feu exacte (${curL}).`, said === 'eteint' && cur !== 'eteint' ? `Feu annoncé éteint alors qu'il est ${curL} : tant que le déblai et le contrôle ne sont pas faits, on ne déclare pas un feu éteint.` : `L'état du feu annoncé ne correspond pas à la réalité (${curL}).`, 30);
   ok((f.fais || '').length > 10, 'Actions en cours décrites.', '« Je fais » vide.', 20);
   ok(has(f.suis, /glycines|14/), 'Localisation rappelée.', 'Localisation non rappelée.', 20);
   return { pts, out };
@@ -570,20 +986,26 @@ function evalCR(f) {
 function fmtDur(s) { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, '0')} s`; }
 
 function sendMessage(type, f) {
+  const canal = f.canal || CANAUX.OPE;
+  if (f.cos && G.cosT == null) G.cosT = G.W.t;
   const lines = [`JE SUIS : ${f.suis}`, `JE VOIS : ${f.vois}`, type === 'ambiance' ? `JE PRÉVOIS : ${f.prevois}` : `VICTIMES : ${f.victimes}`, `JE FAIS : ${f.fais}`, `JE DEMANDE : ${f.demande || '—'}`];
   if (type === 'ambiance') {
     if (G.ambiance) return;
     G.ambiance = { t: G.W.t, f, ev: evalAmbiance(f), model: modelMessage('ambiance') };
     G.lastCorrection = { type: 'ambiance', t: G.W.t, f, ev: G.ambiance.ev, model: G.ambiance.model };
-    radio('CDG', 'CODIS', `MESSAGE D'AMBIANCE${f.cos ? ' — je prends le COS' : ''}. ` + lines.join(' / '), 'msg');
+    radio('CDG', 'CODIS', `MESSAGE D'AMBIANCE${f.cos ? ' — je prends le COS' : ''}. ` + lines.join(' / '), 'msg', canal);
   } else {
     const ev = evalCR(f);
+    const okCh = canal === CANAUX.CDT;
+    ev.out.push({ ok: okCh, text: okCh ? 'Compte rendu passé sur le GRP 275 CDT.' : `Compte rendu passé sur ${canal} : le COS bascule ses comptes rendus sur le GRP 275 CDT.` });
+    if (okCh) ev.pts = Math.min(100, ev.pts + 0); else { ev.pts = Math.max(0, ev.pts - 10); G.chanErr++; }
     G.crs.push({ t: G.W.t, f, ev });
     G.lastCorrection = { type: 'cr', t: G.W.t, f, ev, model: modelMessage('cr'), n: G.crs.length };
-    radio('CDG', 'CODIS', `COMPTE RENDU N°${G.crs.length}. ` + lines.join(' / '), 'msg');
+    radio('CDG', 'CODIS', `COMPTE RENDU N°${G.crs.length}. ` + lines.join(' / '), 'msg', canal);
+    if (!okCh) G.timers.push({ t: G.W.t + 4, fn: () => radio('CODIS', 'CDG', 'CODIS pour COS : reçu. Passez désormais vos comptes rendus sur le GRP 275.', 'msg', canal) });
   }
   requestRenforts(f.renforts || []);
-  setTimeout(() => radio('CODIS', 'CDG', 'Reçu.'), 500);
+  G.timers.push({ t: G.W.t + 3, fn: () => radio('CODIS', 'CDG', 'Reçu.', 'msg', canal) });
   G.dirty = true;
 }
 
@@ -595,12 +1017,14 @@ function gauges() {
   const Qapt = ROOMS.reduce((s, r) => s + W.Z[r].fireQ, 0);
   const burning = ROOMS.filter(r => roomOnFire(W, r)).length;
   const cageSmoke = LEVELS.filter((l, i) => conditionsAt(W, 'CAGE', i * 2.6 + 1.5).vis < 3).length;
-  const situation = clamp(100 - Qapt / 90 - cageSmoke * 6 - Math.max(0, burning - 1) * 12, 0, 100);
+  const situation = clamp(100 - (Qapt + G.r4.q) / 90 - cageSmoke * 6 - Math.max(0, burning - 1) * 12 - (hasResidual(W) ? 8 : 0), 0, 100);
   const victimes = G.victims.reduce((s, v) => s + (v.fed >= 2.5 ? 0 : (1 - Math.min(v.fed, 2.5) / 2.5) * 100), 0) / G.victims.length;
-  const securite = clamp(100 - G.safety.reduce((s, p) => s + p.pts, 0), 0, 100);
+  const dA = G.actors.find(x => x.distress);
+  const securite = clamp(100 - G.safety.reduce((s, p) => s + p.pts, 0) - (dA ? 25 + (dA.distress.late ? 25 : 0) : 0) - (G.incident && G.incident.grave ? 30 : 0), 0, 100);
   let cmd = 100;
   const since = W.t - T_ARRIVEE;
   if (G.ambiance) cmd -= (100 - G.ambiance.ev.pts) * 0.5;
+  if (G.oi) cmd -= (100 - G.oi.ev.pts) * 0.25; else if (since > 600) cmd -= Math.min(25, (since - 600) / 24);
   else if (since > 300) cmd -= Math.min(50, 20 + (since - 300) / 12);
   if (G.ambiance && since > 20 * 60 && !G.crs.length) cmd -= 15;
   for (const c of G.crs) cmd += (c.ev.pts - 70) * 0.05;
@@ -622,10 +1046,13 @@ function endGame(reason) {
   UI.showDebrief && UI.showDebrief();
 }
 function debriefData() {
-  const g = gauges(), pts = [];
+  const g = gauges(), pts = [], W = G.W;
   const amb = G.ambiance;
   if (!amb) pts.push({ ok: false, text: 'Aucun message d\'ambiance transmis.' });
   else amb.ev.out.forEach(o => pts.push(o));
+  if (!G.oi) pts.push({ ok: false, text: 'Aucun ordre initial formalisé.' });
+  else G.oi.ev.out.filter(o => !o.ok).forEach(o => pts.push({ ok: false, text: 'Ordre initial : ' + o.text }));
+  evalSitac().forEach(o => pts.push({ ok: o.ok, text: 'SITAC : ' + o.text }));
   if (!G.crs.length) pts.push({ ok: false, text: 'Aucun compte rendu transmis.' });
   else G.crs[G.crs.length - 1].ev.out.forEach(o => pts.push(o));
   const v1 = G.victims[0], v2 = G.victims[1];
@@ -634,6 +1061,36 @@ function debriefData() {
   if (G.requests.SMUR || !G.victims.some(v => v.fed >= 0.3)) pts.push({ ok: true, text: G.requests.SMUR ? 'Médicalisation demandée.' : 'Pas de victime nécessitant une médicalisation.' });
   else pts.push({ ok: false, text: 'Victime intoxiquée sans demande de SMUR.' });
   pts.push({ ok: !isOpen('PALIERE') || !ROOMS.some(r => roomOnFire(G.W, r)), text: isOpen('PALIERE') ? 'La porte palière est restée ouverte pendant le feu : la cage s\'est enfumée.' : 'Porte palière maîtrisée.' });
+  const burnt = burntRooms();
+  if (W.fires.some(f => f.out)) {
+    const left = burnt.filter(r => hasResidual(W, r, true) || hasFire(W, r)).map(r => ROOM_NAMES[r]);
+    const hidden = W.smoulder.filter(x => !x.visible && !x.done && !x.found);
+    const hiddenRep = W.smoulder.filter(x => !x.visible && x.reprise);
+    if (hidden.length || hiddenRep.length) pts.push({ ok: false, text: `Point(s) chaud(s) caché(s) non détecté(s) (${[...hidden, ...hiddenRep].map(x => x.where).join(', ')}) : il fallait une reconnaissance à la caméra thermique après le déblai.` });
+    else if (W.smoulder.some(x => !x.visible)) pts.push({ ok: true, text: 'Points chauds cachés détectés à la caméra thermique et traités.' });
+    pts.push({ ok: !left.length, text: left.length ? `Feu ou foyers résiduels encore présents en fin d'exercice : ${left.join(', ')}.` : 'Déblai des pièces sinistrées réalisé.' });
+    pts.push({ ok: !!G.controle, text: G.controle ? `Contrôle à la caméra thermique effectué à ${hhmm(G.controle)}.` : 'Pas de contrôle à la caméra thermique avant la fin : le feu ne pouvait pas être déclaré éteint.' });
+  }
+  const I = G.incident;
+  if (I && I.state !== 'pending') {
+    const a = G.actors.find(x => x.id === I.actor);
+    const eng = a && (a.distress ? a.distress.engagedT : I.engagedT);
+    const reac = eng != null ? eng - I.t : null;
+    pts.push({ ok: reac != null && reac <= 90, text: reac == null ? 'Détresse d\'un binôme : aucun binôme engagé à son secours.' : `Détresse d'un binôme : secours engagé ${fmtDur(reac)} après l'alerte${reac > 90 ? ' (trop long : le binôme de sécurité part dans la minute)' : ''}.` });
+    const urg = G.urgents.find(u => u.t >= I.t);
+    pts.push({ ok: !!urg && urg.t - I.t <= 300, text: urg ? `Message urgent au CODIS ${fmtDur(urg.t - I.t)} après la détresse.` : 'Pas de message urgent au CODIS après la détresse d\'un sapeur-pompier.' });
+    pts.push({ ok: I.state === 'resolved' && !I.grave, text: I.state === 'resolved' ? `Sapeur-pompier sorti ${fmtDur(I.outT - I.t)} après l'alerte, ${I.grave ? 'état grave' : 'sans gravité'}.` : 'Le sapeur-pompier en détresse n\'a pas été sorti.' });
+    pts.push({ ok: !!(G.requests.SMUR && G.requests.SMUR.t >= I.t - 600) || !!(G.requests.VSAV2), text: G.requests.SMUR || G.requests.VSAV2 ? 'Moyens sanitaires demandés pour le sapeur-pompier.' : 'Aucun moyen sanitaire supplémentaire demandé pour le sapeur-pompier.' });
+  }
+  const secu = G.actors.some(x => x.kind === 'binome') && G.orderLog.length;
+  if (secu) pts.push({ ok: !G.secuAsked, text: G.secuAsked ? 'Binômes engagés sans binôme de sécurité désigné.' : 'Binôme de sécurité désigné lors des engagements.' });
+  if (G.chanErr) pts.push({ ok: false, text: `${G.chanErr} message(s) passé(s) sur le mauvais canal (comptes rendus du COS : GRP 275 CDT).` });
+  for (const v of G.victims.filter(x => x.evac)) pts.push({ ok: v.evac.medic || !(v.fed >= 1 || v.grave), text: `${v.name} évacué(e) vers ${v.evac.dest}${v.evac.medic ? ', médicalisé(e)' : ''}.` });
+  if (G.victims.some(v => v.missed)) pts.push({ ok: false, text: 'Une recherche à tâtons dans la fumée est passée à côté d\'une victime : la caméra thermique ou une seconde recherche l\'auraient trouvée.' });
+  if (G.reprises) pts.push({ ok: false, text: `${G.reprises} reprise(s) de feu : foyer résiduel laissé sans déblai.` });
+  if (G.r4.t0 != null) pts.push({ ok: false, text: `Propagation au R+4 par la façade à ${hhmm(G.r4.t0)} : flammes sorties trop longtemps par les fenêtres du séjour (attaque tardive ou façade non protégée).` });
+  else if (G.r4.exp > 60) pts.push({ ok: true, text: 'Façade exposée aux flammes mais pas de propagation au R+4.' });
+  pts.push({ ok: !!W.vpp, text: W.vpp ? `Ventilation opérationnelle mise en œuvre à ${hhmm(G.vppT)}.` : 'Pas de ventilation opérationnelle : logement et cage restés enfumés.' });
   G.safety.forEach(p => pts.push({ ok: false, text: `Sécurité : ${p.text}` }));
   if (G.pauses) pts.push({ ok: false, text: `${G.pauses} pause(s), ${fmtDur(G.pausedTime)} au total.` });
   return { g, pts };
@@ -706,6 +1163,8 @@ function observeText(what) {
   if (what === 'R4') {
     const v2 = G.victims[1];
     know('voisin_r4', 'Voisin du R+4 à sa fenêtre');
+    if (G.r4.t0 != null && !G.r4.out) return `R+4 au-dessus du feu : vitrage cassé, flammes et fumées noires à la fenêtre du R+4.${v2.loc === 'R4_APT' && !v2.atRue ? ' L\'occupant n\'est plus visible.' : ''}`;
+    if (G.r4.exp > 240) return `R+4 : les flammes du R+3 lèchent la façade jusqu'à la fenêtre du R+4, le vitrage noircit.${v2.mode === 'fenetre' ? ' Un homme âgé appelle à l\'aide.' : ''}`;
     return v2.mode === 'fenetre' ? 'R+4 au-dessus du feu : un homme âgé appelle à l\'aide à sa fenêtre et menace de descendre.' : 'R+4 : l\'occupant est à sa fenêtre, plus calme.';
   }
   if (what.startsWith('CAGE_')) {
@@ -737,15 +1196,21 @@ function observe(what) {
 const FIRE_STATES = [['developpement', 'En développement'], ['non_maitrise', 'Non maîtrisé'], ['circonscrit', 'Circonscrit'], ['maitrise', 'Maîtrisé'], ['eteint', 'Éteint']];
 function updateFireStatus() {
   const W = G.W, F = G.fire;
-  const Q = ROOMS.reduce((s, r) => s + W.Z[r].fireQ, 0);
+  const Q = ROOMS.reduce((s, r) => s + W.Z[r].fireQ, 0) + G.r4.q;
   F.qs = F.qs == null ? Q : F.qs + (Q - F.qs) * 0.01;   // lissage ~10 s
   if (!F.lastHist || W.t - F.lastHist >= 10) { F.hist.push(F.qs); F.lastHist = W.t; if (F.hist.length > 13) F.hist.shift(); }
-  const burning = ROOMS.filter(r => hasFire(W, r));
+  const burning = ROOMS.filter(r => hasFire(W, r) && (roomOnFire(W, r) || W.Z[r].fireQ > 30));
+  const r4On = G.r4.t0 != null && !G.r4.out;
+  if (burning.length || r4On) F.lastFlame = W.t;
   const trend = F.hist.length > 6 ? F.qs - F.hist[F.hist.length - 7] : 0;
+  const residual = hasResidual(W) || (G.r4.out && !G.r4.deblaye);
   let cand;
-  if (!burning.length) cand = 'eteint';
-  else if (F.qs < 400) cand = 'maitrise';
-  else if (burning.every(r => (W.water[r] || 0) > 0) && W.t - F.lastEvt > 90) cand = 'circonscrit';
+  // Eteint : plus de flammes, deblai fait et controle a la camera thermique effectue.
+  // Maitrise : flammes abattues depuis 2 min, sans reprise ; il reste deblai et controle.
+  if (!burning.length && !r4On && !residual && G.controle) cand = 'eteint';
+  else if (!burning.length && !r4On && W.t - (F.lastFlame || 0) > 120) cand = 'maitrise';
+  else if (!burning.length && !r4On) cand = F.cur === 'developpement' ? 'non_maitrise' : 'circonscrit';
+  else if (burning.every(r => (W.water[r] || 0) > 0) && (!r4On || G.actors.some(x => x.loc === 'R4_APT' && x.flowing)) && W.t - F.lastEvt > 90) cand = 'circonscrit';
   else if (trend > 400 || W.t - F.lastEvt < 120) cand = 'developpement';
   else cand = 'non_maitrise';
   if (cand === F.cur) { F.cand = null; return; }
@@ -777,13 +1242,127 @@ function modelMessage(type) {
   dem.push('1 FPT en renfort'); dem.push('police pour la circulation');
   out.demande = dem.join(', ') + '.';
   if (type === 'cr') {
-    out.vois = burning.length ? `Feu d'appartement au R+3 ${G.fire.cur === 'circonscrit' ? 'circonscrit' : 'en cours'}.` : 'Feu éteint au R+3, déblai et ventilation en cours.';
+    const cur = G.fire.cur;
+    out.vois = cur === 'eteint' ? 'Feu éteint au R+3 : déblai terminé, contrôle à la caméra thermique sans point chaud.'
+      : cur === 'maitrise' ? 'Feu maîtrisé au R+3 : flammes abattues, déblai et ventilation en cours, contrôle à suivre.'
+      : cur === 'circonscrit' ? `Feu circonscrit au R+3${G.r4.t0 != null ? ' et au R+4' : ''}, attaque en cours.`
+      : `Feu d'appartement au R+3 ${cur === 'developpement' ? 'en développement' : 'non maîtrisé'}${G.r4.t0 != null && !G.r4.out ? ', propagation au R+4 par la façade' : ''}.`;
     const vs = G.victims.filter(v => v.found || v.atRue).map(v => `${v.name} : ${vState(v).s.toLowerCase()}${v.pec ? ', pris(e) en charge par le VSAV' : ''}`);
     out.victimes = vs.length ? vs.join(' ; ') + '.' : 'Aucune victime retrouvée à ce stade.';
   }
   return out;
 }
 
+// ===========================================================================
+// ORDRE INITIAL (SAOIECL) : objectifs, idees de manoeuvre, execution
+// ===========================================================================
+const OBJECTIFS = [
+  ['o_sauver', 'Sauver les personnes menacées au R+3'],
+  ['o_occupants', 'Mettre en sécurité les occupants des étages supérieurs'],
+  ['o_propag', 'Éviter la propagation (cage d\'escalier, étages, façade)'],
+  ['o_eteindre', 'Éteindre le feu'],
+  ['o_intervenants', 'Assurer la sécurité des intervenants'],
+  ['o_victimes', 'Prendre en charge les victimes'],
+  ['o_alim', 'Pérenniser l\'alimentation en eau'],
+];
+const IDEES = [
+  ['im_sauv', 'Rechercher et extraire la victime sous protection d\'une LDV', ['RECHERCHE', 'PA_CH1'], 'o_sauver'],
+  ['im_reco', 'Reconnaître l\'intégralité de l\'appartement', ['RECHERCHE', 'ATTAQUE'], 'o_sauver'],
+  ['im_attaque', 'Attaquer le feu par l\'intérieur, LDV 500 par la cage', ['ATTAQUE'], 'o_eteindre'],
+  ['im_porte', 'Maîtriser la porte palière du R+3', ['PALIERE', 'ATTAQUE'], 'o_propag'],
+  ['im_r4', 'Mettre en sécurité les occupants du R+4 (confinement ou échelle)', ['R4', 'PA_R4'], 'o_occupants'],
+  ['im_desenf', 'Désenfumer la cage d\'escalier (exutoire et porte d\'immeuble)', ['EXUTOIRE'], 'o_propag'],
+  ['im_alim', 'Alimenter le FPT sur le PI', ['ALIM'], 'o_alim'],
+  ['im_ct', 'Reconnaître à la caméra thermique (foyer, victimes, points chauds)', ['CONTROLE', 'RECHERCHE'], 'o_sauver'],
+  ['im_pec', 'Regrouper et prendre en charge les victimes au pied de l\'immeuble', ['PEC'], 'o_victimes'],
+];
+function startRT() { if (G.phase === 'arrivee') { G.phase = 'rt'; G.rtStart = G.W.t; G.journal.push({ t: G.W.t, text: 'Début du raisonnement tactique.' }); G.dirty = true; } }
+function giveOI(oi) {
+  // oi = { S, A, C, L, obj: [ids], im: [ids], exe: [{ id, mission, opts }] }
+  if (G.oi || G.ended) return null;
+  startRT();
+  const ev = evalOI(oi);
+  G.oi = Object.assign({ t: G.W.t, ev, model: modelOI() }, oi);
+  G.phase = 'conduite';
+  const objTxt = oi.obj.map(k => OBJECTIFS.find(o => o[0] === k)[1].toLowerCase()).join(' ; ');
+  radio('CDG', 'Chefs d\'agrès', `ORDRE INITIAL. Situation : ${oi.S || '—'}. Objectifs : ${objTxt || '—'}.`, 'ordre');
+  for (const e of oi.exe) {
+    const a = G.actors.find(x => x.id === e.id);
+    if (a && e.mission) order(a, e.mission, e.opts || {});
+  }
+  G.lastCorrection = { type: 'oi', t: G.W.t, f: oi, ev, model: G.oi.model };
+  G.journal.push({ t: G.W.t, text: 'Ordre initial donné.' });
+  G.dirty = true;
+  return G.lastCorrection;
+}
+function evalOI(oi) {
+  const out = []; let pts = 0;
+  const ok = (c, good, bad, p) => { out.push({ ok: !!c, text: c ? good : bad }); if (c) pts += p; };
+  const t = G.W.t - T_ARRIVEE;
+  const has = k => oi.obj.includes(k), im = k => oi.im.includes(k);
+  const missions = oi.exe.filter(e => e.mission).map(e => e.mission);
+  ok(t <= 600, `Ordre initial donné ${fmtDur(t)} après l'arrivée.`, `Ordre initial tardif : ${fmtDur(t)} après l'arrivée.`, 10);
+  ok((oi.S || '').length > 15, 'Situation exprimée.', 'Situation non exprimée (où, quoi, contre quoi).', 8);
+  ok((oi.A || '').length > 10, 'Anticipation exprimée.', 'Anticipation absente : que se passe-t-il si je ne fais rien ?', 8);
+  ok(has('o_sauver'), 'Objectif de sauvetage retenu : une personne est en danger au R+3.', 'Une personne âgée est en danger au R+3 : le sauvetage devait être un objectif.', 14);
+  ok(has('o_occupants'), 'Mise en sécurité des étages supérieurs retenue.', 'Le R+4 est menacé par la cage enfumée : objectif de mise en sécurité oublié.', 10);
+  ok(has('o_propag') || has('o_eteindre'), 'Objectif sur le feu retenu.', 'Aucun objectif sur le feu lui-même.', 8);
+  ok(has('o_intervenants'), 'Sécurité des intervenants affichée.', 'Sécurité des intervenants non affichée dans les objectifs.', 6);
+  // chaque idee de manoeuvre doit avoir des moyens
+  const orphans = oi.im.filter(k => { const d = IDEES.find(x => x[0] === k); return !d[2].some(m => missions.includes(m)); });
+  ok(oi.im.length && !orphans.length, 'Chaque idée de manœuvre a des moyens dans l\'exécution.', orphans.length ? `Idées de manœuvre sans moyens : ${orphans.map(k => IDEES.find(x => x[0] === k)[1].toLowerCase()).join(' ; ')}.` : 'Aucune idée de manœuvre exprimée.', 12);
+  // chaque mission doit servir une idee de manoeuvre
+  const loose = oi.exe.filter(e => e.mission && !oi.im.some(k => IDEES.find(x => x[0] === k)[2].includes(e.mission)));
+  ok(!loose.length, 'Toutes les missions découlent d\'une idée de manœuvre.', `Missions sans idée de manœuvre correspondante : ${loose.map(e => MISSIONS[e.mission].label.toLowerCase()).join(' ; ')}.`, 8);
+  ok(im('im_sauv') && (missions.includes('RECHERCHE') || missions.includes('PA_CH1')), 'Moyens engagés au sauvetage.', 'Aucun moyen engagé sur le sauvetage de la victime.', 10);
+  ok(!missions.includes('ATTAQUE') || missions.includes('ALIM') || G.alim, 'Attaque appuyée par une alimentation pérenne.', 'Attaque engagée sur la seule citerne du FPT (6 min à 500 l/min) : alimentation oubliée.', 6);
+  const subs = new Set(oi.exe.filter(e => e.mission).map(e => (G.actors.find(a => a.id === e.id) || {}).engin));
+  ok(subs.size <= 4, `${subs.size} subordonné(s) direct(s) : règle des 4 respectée.`, `${subs.size} subordonnés directs : au-delà de 4, sectorisez ou demandez un chef de colonne.`, 0);
+  ok((oi.C || '').length > 5, 'Commandement précisé.', 'Commandement non précisé (COS, PC, canal).', 0);
+  return { pts: Math.min(100, pts), out, t };
+}
+function modelOI() {
+  const K = G.K.facts;
+  return {
+    S: 'Feu d\'appartement au R+3 d\'un immeuble R+4, séjour embrasé côté rue. Cage d\'escalier enfumée, porte palière restée ouverte. Une personne âgée présumée dans la chambre côté rue, voisin âgé bloqué au R+4.',
+    A: 'Si je ne fais rien : propagation au reste de l\'appartement, enfumage de toute la cage, intoxication de la victime et du voisin du R+4, voire propagation au R+4 par la façade.',
+    O: 'Sauver la personne du R+3 ; mettre en sécurité les occupants du R+4 ; éviter la propagation par la cage ; éteindre ; assurer la sécurité des intervenants ; prendre en charge les victimes ; pérenniser l\'alimentation.',
+    I: 'Recherche et extraction sous protection d\'une LDV ; attaque du foyer par la cage avec maîtrise de la porte palière ; confinement du R+4 ou sauvetage par l\'échelle ; alimentation sur PI ; regroupement des victimes au pied de l\'immeuble.',
+    E: 'FPT 1 : BAT attaque LDV 500 et maîtrise de la porte palière, BAL alimentation sur PI puis recherche et extraction en priorité chambre côté rue. PA 18 : mise en station façade, sauvetage ou mise en sécurité du R+4. VSAV 1 : prise en charge des victimes au pied de l\'immeuble.',
+    C: 'COS : chef de groupe, VLCG au pied de l\'immeuble. Comptes rendus par les chefs d\'agrès sur le canal opérationnel.',
+    L: 'Point de regroupement des victimes au pied de l\'immeuble, demande de SMUR, 1 FPT en renfort.',
+  };
+}
+
+// ===========================================================================
+// SITAC DU JOUEUR (dessinee avec les symboles conventionnels)
+// ===========================================================================
+function sitacAdd(el) { el.t = G.W.t; G.sitacUser.push(el); G.dirty = true; }
+function sitacRemoveNear(x, y) {
+  let best = -1, bd = 1.2;
+  G.sitacUser.forEach((e, i) => {
+    const d = e.pts ? Math.min(...e.pts.map(q => Math.hypot(q[0] - x, q[1] - y))) : Math.hypot((e.x2 != null ? (e.x + e.x2) / 2 : e.x) - x, (e.y2 != null ? (e.y + e.y2) / 2 : e.y) - y);
+    if (d < bd) { bd = d; best = i; } });
+  if (best >= 0) G.sitacUser.splice(best, 1);
+}
+const RECTS = { SEJ: [0.2, 5.6, 0.2, 4.6], CUI: [5.8, 8.2, 0.2, 4.6], CH1: [8.4, 10.8, 0.2, 4.6], COU: [0.2, 10.8, 4.8, 5.8], CH2: [0.2, 3.8, 6.0, 8.4], SDB: [4.0, 6.0, 6.0, 8.4], CH3: [6.2, 10.8, 6.0, 8.4] };
+const inRoom = (x, y, r) => { const R = RECTS[r]; return x >= R[0] - 0.3 && x <= R[1] + 0.3 && y >= R[2] - 0.3 && y <= R[3] + 0.3; };
+function evalSitac() {
+  const U = G.sitacUser, out = [];
+  const ok = (c, good, bad) => out.push({ ok: !!c, text: c ? good : bad });
+  if (!U.length) return [{ ok: false, text: 'Aucune SITAC dessinée.' }];
+  const end = e => [e.x2 != null ? e.x2 : e.x, e.y2 != null ? e.y2 : e.y];
+  ok(U.some(e => e.k === 'feu' && inRoom(e.x, e.y, 'SEJ')), 'Foyer placé au séjour.', 'Le foyer (séjour) n\'est pas représenté au bon endroit.');
+  ok(U.some(e => e.k === 'victime' && inRoom(e.x, e.y, 'CH1')), 'Victime représentée dans la chambre côté rue.', 'La victime de la chambre côté rue n\'est pas représentée.');
+  ok(U.some(e => e.k === 'attaque' && inRoom(...end(e), 'SEJ')), 'Action d\'attaque dirigée vers le foyer.', 'Pas d\'action d\'attaque dirigée vers le foyer.');
+  ok(U.some(e => e.k === 'sauvetage'), 'Action de sauvetage représentée.', 'Pas d\'action de sauvetage représentée.');
+  ok(U.some(e => e.k === 'eau'), 'Établissement ou alimentation en eau représenté.', 'Alimentation en eau non représentée.');
+  ok(U.some(e => (e.k === 'fumee' || e.k === 'danger') && e.x < 0.3), 'Enfumage ou danger de la cage représenté.', 'L\'enfumage de la cage d\'escalier n\'est pas représenté.');
+  ok(U.some(e => e.k === 'moyen'), 'Moyens représentés.', 'Aucun moyen représenté.');
+  return out;
+}
+
 window.GAME = { newGame, tick, order, availableMissions, MISSIONS, sendMessage, gauges, endGame, debriefData, clock, hhmm, fmtDur,
-  know, vState, ask, observe, availableQuestions, witnessDef, WITNESSES, FIRE_STATES, modelMessage, MISSIONS_LIST: null, snapshotRoom, roomReportText, isOpen, locName, zoneOf, ROOMS, ROOM_NAMES, LEVELS, LEVEL_NAMES, T_ARRIVEE, RENFORTS, radio };
+  know, vState, startRT, giveOI, OBJECTIFS, IDEES, sitacAdd, sitacRemoveNear, evalSitac, ask, observe, availableQuestions, witnessDef, WITNESSES, FIRE_STATES, modelMessage, MISSIONS_LIST: null, snapshotRoom, roomReportText, isOpen, locName, zoneOf, ROOMS, ROOM_NAMES, LEVELS, LEVEL_NAMES, T_ARRIVEE, RENFORTS, radio,
+  orderCA, CANAUX, CANAL_LABEL, SLOTS, moveVehicle, sendUrgent, victimAction, INCIDENTS, vehicleId };
 })();
