@@ -22,11 +22,16 @@ Le jeu tourne entièrement dans le navigateur : rien à installer, ce qui permet
 - Incidents de sécurité aléatoires : malaise, défaillance d'ARI, binôme désorienté. Message de détresse sur la DIR 654, marche à suivre affichée, sauvetage par le binôme de sécurité, message urgent au CODIS, évaluation au débriefing.
 - Radio par canaux SDIS 33 (groupement Centre) : DIR 614 tactique, GRP 269 opérationnel, GRP 275 commandement pour les comptes rendus du COS, DIR 654 sécurité ARI. Tableau des messages filtrable par canal.
 - Engins placés par défaut et déplaçables : point de transit, façade, aval. L'échelle hors de portée ne peut plus manœuvrer, un engin au point de transit allonge la marche d'approche et le brancardage.
+- SITAC : six couleurs conventionnelles (noir, rouge, vert, bleu, orange, violet), symboles, traits libres, zones et textes.
 - Victimes : bilan du VSAV, demande de SMUR, évacuation (le VSAV quitte les lieux), sans alourdir l'intervention. Une recherche à tâtons dans une fumée opaque peut passer à côté d'une victime.
 - Propagation par la façade : si les flammes sortent trop longtemps par les fenêtres du séjour, le feu gagne l'appartement du R+4. L'échelle peut protéger la façade avec une lance.
 - Ventilation opérationnelle : VPP devant la porte d'immeuble, efficace seulement avec un exutoire ouvert. Une ventilation lancée sur un feu non attaqué est sanctionnée.
 - Durée réaliste des actions : capelage ARI, établissement dans l'escalier, recherche pièce par pièce, changement de bouteille. Les binômes s'épuisent, la relève se prépare.
 - Ordres de conduite par clic sur les engins et les binômes, témoins qui arrivent au fil de l'intervention, message d'ambiance chronométré (5 min) et corrigé, débriefing.
+
+## Test réseau (multijoueur)
+
+Avant le multijoueur, ouvrir https://batex23.github.io/chef-de-groupe/test-reseau.html sur un portable de caserne, lancer le test et transmettre le résultat. La page vérifie l'accès à Firebase, la voix en direct (WebRTC) et l'enregistrement du micro.
 
 ## Lancer en local
 

@@ -175,12 +175,24 @@
       <button class="st" data-t="eau"><i class="sw eau line"></i>Établissement</button>
       <button class="st" data-t="moyen"><i class="sw cmd box"></i>Moyen</button>
       <select id="st-moyen" aria-label="Moyen à placer"><option>FPT 1</option><option>BAT</option><option>BAL</option><option>PA 18</option><option>VSAV 1</option><option>VLCG</option><option>FPT 2</option></select>
+      <button class="st" data-t="trait">Trait libre</button>
+      <button class="st" data-t="zone">Zone</button>
+      <button class="st" data-t="texte">Texte</button>
       <button class="st" data-t="gomme">Gomme</button>
+      <span class="stl">Couleur</span>
+      <span class="pal" role="radiogroup" aria-label="Couleur du tracé">
+        <button class="pc" data-c="noir" title="Noir : environnement, existant" aria-label="Noir"></button>
+        <button class="pc" data-c="rouge" title="Rouge : sinistre, actions sur le feu" aria-label="Rouge"></button>
+        <button class="pc" data-c="vert" title="Vert : personnes, sauvetages" aria-label="Vert"></button>
+        <button class="pc" data-c="bleu" title="Bleu : eau, établissements" aria-label="Bleu"></button>
+        <button class="pc" data-c="orange" title="Orange : risques particuliers" aria-label="Orange"></button>
+        <button class="pc" data-c="violet" title="Violet : commandement" aria-label="Violet"></button>
+      </span>
       <span class="stl">Afficher</span>
       <select id="st-view" aria-label="Couches affichées"><option value="both">Renseignements et ma SITAC</option><option value="user">Ma SITAC seule</option><option value="info">Renseignements seuls</option></select>
     </div>
-    <canvas id="bigplan" aria-label="SITAC agrandie, zone de dessin"></canvas>
-    <p class="hint">Cliquez pour poser un symbole. Pour une action ou un établissement, cliquez-glissez du départ vers l'arrivée.</p></div>
+    <div class="bpwrap"><canvas id="bigplan" aria-label="SITAC agrandie, zone de dessin"></canvas><input id="st-text" type="text" hidden placeholder="Texte, puis Entrée" aria-label="Texte à poser sur la SITAC"></div>
+    <p class="hint">Cliquez pour poser un symbole. Action ou établissement : cliquez-glissez du départ vers l'arrivée. Trait libre et zone : dessinez à main levée. Chaque outil prend sa couleur conventionnelle, que vous pouvez changer.</p></div>
 </div>
 <div class="overlay" id="oiwin" hidden>
   <div class="card oicard">

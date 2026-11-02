@@ -132,6 +132,11 @@ function drawPlan(now, ctxArg) {
 }
 // ---------------------------------------------------------------- symboles conventionnels de la SITAC
 const SYM_COL = { feu: '--inc', attaque: '--inc', victime: '--pers', sauvetage: '--pers', danger: '--risk', reco: '--cmd', eau: '--eau', fumee: '--smoke-l', moyen: '--cmd' };
+// couleurs conventionnelles de la SITAC
+const PAL = { noir: '#15181c', rouge: '#e2373f', vert: '#2fb36b', bleu: '#3a8eea', orange: '#f08c2a', violet: '#9a72ff' };
+const TOOL_COL = { feu: 'rouge', attaque: 'rouge', victime: 'vert', sauvetage: 'vert', danger: 'orange', reco: 'violet', eau: 'bleu', fumee: 'noir' };
+let curCol = 'rouge';
+function pathOn(ctx, pts, close) { ctx.beginPath(); pts.forEach((q, i) => { const X = px(q[0]), Y = py(q[1]); if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); }); if (close) ctx.closePath(); }
 function arrow(ctx, x1, y1, x2, y2, col, w, dash) {
   ctx.save(); ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round';
   if (dash) ctx.setLineDash([7, 6]);
@@ -141,8 +146,24 @@ function arrow(ctx, x1, y1, x2, y2, col, w, dash) {
   ctx.restore();
 }
 function drawSym(ctx, e) {
-  const X = px(e.x), Y = py(e.y), col = css(SYM_COL[e.k] || '--cmd');
+  const X = px(e.x), Y = py(e.y), col = e.col ? PAL[e.col] : css(SYM_COL[e.k] || '--cmd');
+  const halo = e.col === 'noir';   // le noir reste lisible sur le fond sombre grace a un liseré clair
   ctx.save();
+  if (e.k === 'trait' || e.k === 'zone') {
+    if (!e.pts || e.pts.length < 2) { ctx.restore(); return; }
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    if (e.k === 'zone') { pathOn(ctx, e.pts, true); ctx.globalAlpha = 0.22; ctx.fillStyle = halo ? '#9aa6b4' : col; ctx.fill(); ctx.globalAlpha = 1; }
+    if (halo) { pathOn(ctx, e.pts, e.k === 'zone'); ctx.strokeStyle = 'rgba(232,238,244,.75)'; ctx.lineWidth = 6; ctx.stroke(); }
+    pathOn(ctx, e.pts, e.k === 'zone'); ctx.strokeStyle = col; ctx.lineWidth = 3; if (e.k === 'zone') ctx.setLineDash([8, 5]); ctx.stroke();
+    ctx.restore(); return;
+  }
+  if (e.k === 'texte') {
+    ctx.font = `700 13px ${css('--f-body')}`; ctx.textBaseline = 'middle';
+    if (halo) { ctx.strokeStyle = 'rgba(232,238,244,.85)'; ctx.lineWidth = 4; ctx.strokeText(e.text, X, Y); }
+    else { ctx.strokeStyle = 'rgba(13,20,28,.85)'; ctx.lineWidth = 4; ctx.strokeText(e.text, X, Y); }
+    ctx.fillStyle = col; ctx.fillText(e.text, X, Y); ctx.restore(); return;
+  }
+  if (halo) { ctx.shadowColor = 'rgba(232,238,244,.9)'; ctx.shadowBlur = 4; }
   if (e.k === 'feu') {
     ctx.fillStyle = col; ctx.globalAlpha = 0.9; ctx.beginPath();
     ctx.moveTo(X, Y - 16); ctx.quadraticCurveTo(X + 13, Y - 2, X + 8, Y + 9); ctx.quadraticCurveTo(X, Y + 13, X - 8, Y + 9); ctx.quadraticCurveTo(X - 13, Y - 2, X, Y - 16); ctx.fill();
@@ -569,23 +590,44 @@ function bind() {
     const c = GM.giveOI({ S: f.get('S') || '', A: f.get('A') || '', C: f.get('C') || '', L: f.get('L') || '', obj: f.getAll('obj'), im: f.getAll('im'), exe });
     $('#oiwin').hidden = true; if (c) showCorrection(c);
   });
+  const setCol = c => { curCol = c; document.querySelectorAll('.pc').forEach(x => x.setAttribute('aria-pressed', x.dataset.c === c)); };
+  setCol('rouge');
+  document.querySelectorAll('.pc').forEach(b => b.addEventListener('click', () => setCol(b.dataset.c)));
   document.querySelectorAll('.st').forEach(b => b.addEventListener('click', () => {
     tool = tool === b.dataset.t ? null : b.dataset.t;
+    if (tool && TOOL_COL[tool]) setCol(TOOL_COL[tool]);
     document.querySelectorAll('.st').forEach(x => x.setAttribute('aria-pressed', x.dataset.t === tool));
   }));
+  const stx = $('#st-text');
+  stx.addEventListener('keydown', ev => {
+    if (ev.key === 'Enter') { const v = stx.value.trim(); if (v) GM.sitacAdd({ k: 'texte', x: stx._p.x, y: stx._p.y, text: v.slice(0, 60), col: curCol }); stx.hidden = true; stx.value = ''; drawPlan(performance.now(), bigCtx); }
+    if (ev.key === 'Escape') { ev.stopPropagation(); stx.hidden = true; stx.value = ''; }
+  });
   $('#st-view').addEventListener('change', () => { drawPlan(performance.now(), bigCtx); });
   const bp = $('#bigplan');
   bp.addEventListener('pointerdown', ev => {
     if (!tool || mode !== 'game') return;
     const p = planFromEvent(ev);
     if (tool === 'gomme') { GM.sitacRemoveNear(p.x, p.y); drawPlan(performance.now(), bigCtx); return; }
-    if (DRAG_TOOLS.includes(tool)) { drag = { k: tool, x: p.x, y: p.y, x2: p.x, y2: p.y }; bp.setPointerCapture(ev.pointerId); }
-    else { GM.sitacAdd({ k: tool, x: p.x, y: p.y, label: tool === 'moyen' ? $('#st-moyen').value : undefined }); drawPlan(performance.now(), bigCtx); }
+    if (tool === 'texte') {
+      const r = bp.getBoundingClientRect(), w = bp.parentElement.getBoundingClientRect();
+      ev.preventDefault();
+      stx._p = p; stx.value = ''; stx.hidden = false; stx.style.left = (ev.clientX - w.left) + 'px'; stx.style.top = (ev.clientY - w.top - 14) + 'px'; stx.focus(); setTimeout(() => stx.focus(), 50); return;
+    }
+    if (tool === 'trait' || tool === 'zone') { drag = { k: tool, x: p.x, y: p.y, pts: [[p.x, p.y]], col: curCol }; bp.setPointerCapture(ev.pointerId); return; }
+    if (DRAG_TOOLS.includes(tool)) { drag = { k: tool, x: p.x, y: p.y, x2: p.x, y2: p.y, col: curCol }; bp.setPointerCapture(ev.pointerId); }
+    else { GM.sitacAdd({ k: tool, x: p.x, y: p.y, col: curCol, label: tool === 'moyen' ? $('#st-moyen').value : undefined }); drawPlan(performance.now(), bigCtx); }
   });
-  bp.addEventListener('pointermove', ev => { if (!drag) return; const p = planFromEvent(ev); drag.x2 = p.x; drag.y2 = p.y; drawPlan(performance.now(), bigCtx); });
+  bp.addEventListener('pointermove', ev => {
+    if (!drag) return; const p = planFromEvent(ev);
+    if (drag.pts) { const l = drag.pts[drag.pts.length - 1]; if (Math.hypot(p.x - l[0], p.y - l[1]) > 0.12) drag.pts.push([+p.x.toFixed(2), +p.y.toFixed(2)]); }
+    else { drag.x2 = p.x; drag.y2 = p.y; }
+    drawPlan(performance.now(), bigCtx);
+  });
   bp.addEventListener('pointerup', () => {
     if (!drag) return;
-    if (Math.hypot(drag.x2 - drag.x, drag.y2 - drag.y) > 0.4) GM.sitacAdd(drag);
+    if (drag.pts) { if (drag.pts.length > 2) { const n = drag.pts.length; drag.x = drag.pts.reduce((a, q) => a + q[0], 0) / n; drag.y = drag.pts.reduce((a, q) => a + q[1], 0) / n; GM.sitacAdd(drag); } }
+    else if (Math.hypot(drag.x2 - drag.x, drag.y2 - drag.y) > 0.4) GM.sitacAdd(drag);
     drag = null; drawPlan(performance.now(), bigCtx);
   });
   $('#sitac-close').addEventListener('click', () => { $('#sitacbig').hidden = true; });

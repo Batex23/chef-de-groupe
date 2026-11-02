@@ -1340,7 +1340,9 @@ function modelOI() {
 function sitacAdd(el) { el.t = G.W.t; G.sitacUser.push(el); G.dirty = true; }
 function sitacRemoveNear(x, y) {
   let best = -1, bd = 1.2;
-  G.sitacUser.forEach((e, i) => { const d = Math.hypot((e.x2 != null ? (e.x + e.x2) / 2 : e.x) - x, (e.y2 != null ? (e.y + e.y2) / 2 : e.y) - y); if (d < bd) { bd = d; best = i; } });
+  G.sitacUser.forEach((e, i) => {
+    const d = e.pts ? Math.min(...e.pts.map(q => Math.hypot(q[0] - x, q[1] - y))) : Math.hypot((e.x2 != null ? (e.x + e.x2) / 2 : e.x) - x, (e.y2 != null ? (e.y + e.y2) / 2 : e.y) - y);
+    if (d < bd) { bd = d; best = i; } });
   if (best >= 0) G.sitacUser.splice(best, 1);
 }
 const RECTS = { SEJ: [0.2, 5.6, 0.2, 4.6], CUI: [5.8, 8.2, 0.2, 4.6], CH1: [8.4, 10.8, 0.2, 4.6], COU: [0.2, 10.8, 4.8, 5.8], CH2: [0.2, 3.8, 6.0, 8.4], SDB: [4.0, 6.0, 6.0, 8.4], CH3: [6.2, 10.8, 6.0, 8.4] };

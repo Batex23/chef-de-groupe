@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test réseau multijoueur</title>
+<style>
+  :root { --bg: #0b1322; --panel: #141d27; --line: #2d3b4c; --ink: #e8eef4; --soft: #c3cfdb; --mute: #8d9db0; --ok: #2fb36b; --warn: #f08c2a; --ko: #e2373f; --cmd: #9a72ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, 'Segoe UI', sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 16px 60px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: .02em; }
+  .lead { color: var(--soft); margin: 0 0 20px; }
+  .row { display: grid; grid-template-columns: 26px 1fr auto; gap: 10px; align-items: start; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin-bottom: 8px; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--line); margin-top: 4px; }
+  .ok .dot { background: var(--ok); } .warn .dot { background: var(--warn); } .ko .dot { background: var(--ko); } .run .dot { background: var(--cmd); animation: p 1s infinite; }
+  @keyframes p { 50% { opacity: .3; } }
+  .row b { display: block; } .row small { color: var(--mute); display: block; }
+  .row .res { font-size: 13px; color: var(--soft); margin-top: 3px; }
+  .ok .res { color: #8fe0b3; } .ko .res { color: #ff9ea3; } .warn .res { color: #ffc58a; }
+  button { background: var(--cmd); color: #fff; border: 0; border-radius: 5px; padding: 9px 14px; font-weight: 600; cursor: pointer; font-size: 14px; }
+  button.sec { background: #1f2b39; border: 1px solid var(--line); }
+  .bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0; }
+  textarea { width: 100%; min-height: 160px; background: #0d141c; color: var(--soft); border: 1px solid var(--line); border-radius: 5px; font: 12px/1.45 ui-monospace, monospace; padding: 10px; }
+  .sum { padding: 12px 14px; border-radius: 6px; margin: 14px 0; border: 1px solid var(--line); background: var(--panel); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Test réseau pour le multijoueur</h1>
+  <p class="lead">À ouvrir sur un portable de caserne, sur le réseau du SDIS. Lancez le test, autorisez le micro si on vous le demande, puis copiez le résultat et envoyez-le.</p>
+  <div class="bar"><button id="go">Lancer le test</button><button class="sec" id="copy" disabled>Copier le résultat</button></div>
+  <div id="list"></div>
+  <div class="sum" id="sum" hidden></div>
+  <textarea id="out" readonly hidden aria-label="Résultat à copier"></textarea>
+</main>
+<script type="module">
+const TESTS = [
+  { id: 'nav', t: 'Navigateur', d: 'Version, 3D (WebGL), enregistrement audio' },
+  { id: 'cdn', t: 'Bibliothèques du jeu (jsDelivr)', d: 'Nécessaire pour la 3D' },
+  { id: 'fbrest', t: 'Base temps réel Google Firebase : accès simple', d: 'Synchronisation des joueurs' },
+  { id: 'fbws', t: 'Firebase : connexion permanente (WebSocket)', d: 'Synchronisation rapide, sinon mode dégradé plus lent' },
+  { id: 'fbsdk', t: 'Firebase : bibliothèque officielle', d: 'Chargement depuis gstatic.com et lecture d\'une donnée' },
+  { id: 'stun', t: 'Voix en direct (WebRTC)', d: 'Radio en temps réel entre joueurs' },
+  { id: 'mic', t: 'Micro : enregistrer puis réécouter 3 s', d: 'Messages radio enregistrés pour le débriefing' },
+];
+const R = {};
+const $ = s => document.querySelector(s);
+$('#list').innerHTML = TESTS.map(x => `<div class="row" id="r-${x.id}"><i class="dot"></i><div><b>${x.t}</b><small>${x.d}</small><div class="res"></div></div><span></span></div>`).join('');
+function set(id, st, txt) { R[id] = { st, txt }; const r = $('#r-' + id); r.className = 'row ' + st; r.querySelector('.res').textContent = txt; }
+const timeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('délai dépassé (' + ms / 1000 + ' s)')), ms))]);
+
+async function tNav() {
+  const ua = navigator.userAgent;
+  const c = document.createElement('canvas'); const gl = c.getContext('webgl2') || c.getContext('webgl');
+  const rec = typeof MediaRecorder !== 'undefined', mic = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  const br = /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'autre';
+  const v = (ua.match(/(Edg|Chrome|Firefox|Version)\/(\d+)/) || [])[2] || '?';
+  const ok = gl && rec && mic;
+  set('nav', ok ? 'ok' : 'warn', `${br} ${v} · 3D ${gl ? 'oui' : 'NON'} · enregistrement ${rec ? 'oui' : 'NON'} · micro ${mic ? 'accessible' : 'NON (page non sécurisée ou bloqué)'}`);
+}
+async function tCdn() {
+  const r = await timeout(fetch('https://cdn.jsdelivr.net/npm/three@0.169.0/package.json', { cache: 'no-store' }), 8000);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  set('cdn', 'ok', 'Accessible.');
+}
+// base Firebase publique (Hacker News) : sert uniquement a tester l'acces au service, aucune donnee n'est envoyee
+const FB = 'hacker-news.firebaseio.com';
+async function tFbRest() {
+  const t0 = performance.now();
+  const r = await timeout(fetch(`https://${FB}/v0/maxitem.json`, { cache: 'no-store' }), 8000);
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  await r.json();
+  set('fbrest', 'ok', `Accessible (${Math.round(performance.now() - t0)} ms).`);
+}
+function tFbWs() {
+  return timeout(new Promise((res, rej) => {
+    const t0 = performance.now();
+    const ws = new WebSocket(`wss://${FB}/.ws?v=5&ns=hacker-news`);
+    ws.onmessage = () => { set('fbws', 'ok', `Connexion permanente établie (${Math.round(performance.now() - t0)} ms).`); ws.close(); res(); };
+    ws.onerror = () => rej(new Error('WebSocket refusé par le réseau'));
+  }), 8000);
+}
+async function tFbSdk() {
+  const { initializeApp } = await timeout(import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js'), 10000);
+  const { getDatabase, ref, get } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js');
+  const app = initializeApp({ databaseURL: 'https://' + FB }, 'test');
+  const snap = await timeout(get(ref(getDatabase(app), 'v0/maxitem')), 10000);
+  set('fbsdk', 'ok', `Bibliothèque chargée, donnée lue (${snap.val()}).`);
+}
+function tStun() {
+  return new Promise(res => {
+    let pc;
+    try { pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }); }
+    catch (e) { set('stun', 'ko', 'WebRTC indisponible dans ce navigateur.'); return res(); }
+    const types = new Set();
+    pc.createDataChannel('t');
+    pc.onicecandidate = e => { if (e.candidate) { const m = /typ (\w+)/.exec(e.candidate.candidate); if (m) types.add(m[1]); } };
+    pc.createOffer().then(o => pc.setLocalDescription(o));
+    setTimeout(() => {
+      pc.close();
+      if (types.has('srflx')) set('stun', 'ok', 'Voix directe possible entre postes (sortie UDP autorisée).');
+      else if (types.size) set('stun', 'warn', 'Sortie UDP bloquée : la voix en direct passera par un relais, ou par messages enregistrés.');
+      else set('stun', 'ko', 'WebRTC bloqué : radio par messages enregistrés uniquement.');
+      res();
+    }, 5000);
+  });
+}
+async function tMic() {
+  const stream = await timeout(navigator.mediaDevices.getUserMedia({ audio: true }), 20000);
+  const mime = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find(m => MediaRecorder.isTypeSupported(m)) || '';
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 24000 } : undefined);
+  const chunks = [];
+  rec.ondataavailable = e => chunks.push(e.data);
+  set('mic', 'run', 'Parlez maintenant : « CDG pour CA FPT 1, test radio »…');
+  rec.start();
+  await new Promise(r => setTimeout(r, 3000));
+  rec.stop(); await new Promise(r => rec.onstop = r);
+  stream.getTracks().forEach(t => t.stop());
+  const blob = new Blob(chunks, { type: rec.mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = new Audio(url); a.play().catch(() => {});
+  set('mic', 'ok', `Enregistré (${(blob.size / 1024).toFixed(1)} Ko pour 3 s, ${rec.mimeType || 'format par défaut'}). Vous devriez vous réentendre.`);
+}
+async function run(id, fn) {
+  set(id, 'run', 'En cours…');
+  try { await fn(); } catch (e) { set(id, 'ko', 'Échec : ' + (e && e.message || e)); }
+}
+$('#go').addEventListener('click', async () => {
+  $('#go').disabled = true;
+  await run('nav', tNav);
+  await Promise.all([run('cdn', tCdn), run('fbrest', tFbRest), run('fbws', tFbWs), run('fbsdk', tFbSdk), run('stun', tStun)]);
+  await run('mic', tMic);
+  const ko = TESTS.filter(x => R[x.id].st === 'ko').length, warn = TESTS.filter(x => R[x.id].st === 'warn').length;
+  const okSync = R.fbrest.st === 'ok' && (R.fbws.st === 'ok' || R.fbsdk.st === 'ok');
+  $('#sum').hidden = false;
+  $('#sum').innerHTML = okSync ? (ko || warn ? `<b>Le multijoueur est possible</b> sur ce réseau, avec ${ko + warn} point(s) à adapter (voir en orange ou rouge).` : '<b>Tout passe.</b> Le multijoueur avec radio en direct est possible sur ce réseau.')
+    : '<b>La synchronisation par Firebase est bloquée</b> sur ce réseau : il faudra une autre solution ou une demande au service informatique.';
+  const txt = ['TEST RESEAU CHEF DE GROUPE', new Date().toLocaleString('fr-FR'), navigator.userAgent, ...TESTS.map(x => `[${R[x.id].st.toUpperCase()}] ${x.t} : ${R[x.id].txt}`)].join('\n');
+  $('#out').value = txt; $('#out').hidden = false; $('#copy').disabled = false; $('#go').disabled = false; $('#go').textContent = 'Relancer';
+});
+$('#copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('#out').value); $('#copy').textContent = 'Copié'; } catch (e) { $('#out').select(); document.execCommand('copy'); $('#copy').textContent = 'Copié'; } });
+</script>
+</body>
+</html>
