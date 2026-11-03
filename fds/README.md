@@ -69,6 +69,15 @@ Paramètres retenus :
 | `leakK` | 0,43 | fuites des portes fermées |
 | `glassBreakK` | 462 K | bris des vitrages (189 °C de couche haute moyenne, l'équivalent de vos 400 °C au droit de la fenêtre) |
 
+**Vérification sur R1_PORTE_PALIERE_OUVERTE** (version rapide, 1200 s) : sans changer aucun réglage, le moteur calé sur R0 reproduit R1. Écarts moyens :
+- couloir : 16 °C ;
+- chambre 2 : 10 °C ;
+- cage au R+3 : 12 °C ;
+- CO dans la cage au R+3 : 144 ppm.
+
+Une recherche commune sur R0 et R1 ne trouve pas mieux : le calage est conservé.
+
 **Limites connues**
+- Cage d'escalier : dans R1, FDS amène des fumées jusqu'au R+2 (CO jusqu'à 400 ppm), le jeu non ; et le R+4 est trop froid de 24 °C dans le jeu. Il faut découper la cage par niveau.
 - La cage d'escalier reste un seul volume : la température y tombe d'un coup quand la couche remonte, là où FDS décroît en douceur. Le découpage par niveau est prévu.
 - La puissance du canapé est imposée dans FDS : l'embrasement des autres meubles se cale à part. Dans le jeu, il est déclenché quand la puissance dépasse le seuil de Thomas pendant 45 s.

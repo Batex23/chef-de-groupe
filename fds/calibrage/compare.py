@@ -31,7 +31,7 @@ if len(sys.argv) > 3:
         s = next(x for x in SERIES if x[0] == name)
         ax[i].plot(t, s[1], color='#e2373f', lw=2, label='FDS'); ax[i].plot(t, s[2], color='#3a8eea', lw=2, ls='--', label='jeu')
         ax[i].set_title(name, fontsize=11); ax[i].grid(alpha=.3); ax[i].set_xlabel('temps (s)', fontsize=9)
-        for x in (540, 600): ax[i].axvline(x, color='#888', lw=.8, ls=':')
+        for x in (90, 540, 600): ax[i].axvline(x, color='#888', lw=.8, ls=':')
     ax[0].legend()
     fig.suptitle(sys.argv[4] if len(sys.argv) > 4 else 'FDS (rouge) et moteur du jeu (bleu)', fontsize=14)
     fig.tight_layout(); fig.savefig(sys.argv[3], dpi=90)
