@@ -24,7 +24,11 @@ Les scénarios :
 
 Les cas R6 à R8 ajoutent un petit maillage `PARVIS` devant la porte d'immeuble : il faut un processus MPI de plus (6 en version rapide, 4 en version complète). Le VPP est un caisson de 0,8 × 0,8 m posé à 2 m de la porte, qui souffle à 10 m/s ; FDS calcule l'air entraîné autour du cône. La puissance du foyer reste imposée : ces cas mesurent le désenfumage (débits par les ouvertures, visibilité et CO dans la cage et le logement), pas l'activation du feu par l'apport d'air. Pour la ventilation offensive, il faudra plus tard un foyer à pyrolyse calculée.
 
-Fichiers à récupérer pour chaque cas : `<CHID>_devc.csv`, `<CHID>_hrr.csv`, `<CHID>.out`. Ils se rangent dans `fds/resultats/<CHID>/`.
+Fichiers à récupérer pour chaque cas, rangés dans `fds/resultats/<CHID>/` :
+- pour le calage : `<CHID>_devc.csv`, `<CHID>_hrr.csv`, `<CHID>.out` ;
+- pour la fumée et les conditions 3D dans le jeu : `<CHID>.smv` (description du calcul), tous les `<CHID>_*.q` (volumes Plot3D toutes les 20 s : température, visibilité, CO, O₂, puissance volumique), tous les `<CHID>_*.xyz` (grilles), tous les `<CHID>_*.s3d` et `.s3d.sz` (fumée 3D, comme Smokeview).
+
+Ordre de grandeur : environ 1,3 Mo par instant Plot3D, soit 75 à 115 Mo de `.q` par cas, plus la fumée 3D. Un dossier partagé (Google Drive) est plus pratique qu'une pièce jointe.
 
 `check_fds.py` attend une copie des sources de FDS (https://github.com/firemodels/fds) : adapter les chemins en tête du script.
 
