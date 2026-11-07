@@ -1,0 +1,84 @@
+sure Iterations:      2
+       Maximum Velocity Error:  0.31E-01 on Mesh   2 at (  13  11  24)
+       Maximum Pressure Error:  0.14E+02 on Mesh   2 at (  12   3  22)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.60E+00 at (   4,   8,  13)
+       Max divergence:  0.18E+01 at (  10,   7,   3)
+       Min divergence: -0.14E+01 at (  12,   6,   4)
+       Max VN number:   0.69E+00 at (  21,   1,  11)
+       Mesh    2
+       Max CFL number:  0.96E+00 at (  18,   5,  25)
+       Max divergence:  0.30E+00 at (  21,   6,  17)
+       Min divergence: -0.28E+00 at (  19,  10,  12)
+       Max VN number:   0.73E+00 at (  12,  10,  13)
+       Mesh    3
+       Max CFL number:  0.32E+00 at (  15,   4,  40)
+       Max divergence:  0.59E-01 at (  14,   2,  50)
+       Min divergence: -0.71E-01 at (  15,   4,  49)
+       Max VN number:   0.28E+00 at (  15,   2,  50)
+ 
+       Time Step   80800   November  5, 2026  00:46:41
+       Step Size:    0.320E-01 s, Total Time:    1797.51 s
+       Pressure Iterations:      1
+       Maximum Velocity Error:  0.54E-01 on Mesh   2 at (  19  11  25)
+       Maximum Pressure Error:  0.22E+02 on Mesh   1 at (   9   8   3)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.49E+00 at (   5,  10,   8)
+       Max divergence:  0.17E+01 at (  13,   5,   3)
+       Min divergence: -0.11E+01 at (   4,   8,   4)
+       Max VN number:   0.61E+00 at (   9,   1,  11)
+       Mesh    2
+       Max CFL number:  0.85E+00 at (  11,   6,  25)
+       Max divergence:  0.25E+00 at (  18,  10,  10)
+       Min divergence: -0.29E+00 at (  19,  10,  12)
+       Max VN number:   0.60E+00 at (  19,  10,  12)
+       Mesh    3
+       Max CFL number:  0.34E+00 at (  15,   1,  58)
+       Max divergence:  0.53E-01 at (  14,   2,  50)
+       Min divergence: -0.69E-01 at (  15,   2,  50)
+       Max VN number:   0.22E+00 at (  15,   2,  50)
+ 
+       Time Step   80868   November  5, 2026  00:46:57
+       Step Size:    0.213E-01 s, Total Time:    1800.00 s
+       Pressure Iterations:      1
+       Maximum Velocity Error:  0.60E-01 on Mesh   2 at (  22  11  24)
+       Maximum Pressure Error:  0.27E+02 on Mesh   1 at (   8   7   3)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.34E+00 at (   8,   1,  11)
+       Max divergence:  0.18E+01 at (  12,   6,   3)
+       Min divergence: -0.11E+01 at (  10,   8,   4)
+       Max VN number:   0.39E+00 at (  19,   1,  11)
+       Mesh    2
+       Max CFL number:  0.47E+00 at (  10,   6,  14)
+       Max divergence:  0.20E+00 at (  10,   5,  19)
+       Min divergence: -0.31E+00 at (  23,  10,  12)
+       Max VN number:   0.41E+00 at (  23,  10,  12)
+       Mesh    3
+       Max CFL number:  0.21E+00 at (  15,   4,  40)
+       Max divergence:  0.51E-01 at (  15,   2,  48)
+       Min divergence: -0.75E-01 at (  14,   4,  49)
+       Max VN number:   0.24E+00 at (  15,   3,  63)
+ 
+
+
+ DEVICE Activation Times
+
+   1  BRIS_VITRE_SEJ1                                                132.6 s
+   2  BRIS_VITRE_SEJ2                                                200.3 s
+   3  BRIS_VITRE_CUI                                              No Activation
+   4  BRIS_VITRE_CH1                                              No Activation
+ 219  OUV_PORTE_PALIERE->OUT                                         600.0 s
+ 220  OUV_PORTE_CH1->OUT                                               0.1 s
+ 221  OUV_PORTE_CH2->OUT                                               0.1 s
+ 222  OUV_PORTE_CH3->OUT                                          No Activation
+ 223  OUV_EXUTOIRE->OUT                                           No Activation
+ 224  OUV_PORTE_IMMEUBLE->OUT                                        540.0 s
+
+
+ Time Stepping Wall Clock Time (s):    23029.735
+ Total Elapsed Wall Clock Time (s):    23033.679
+
+STOP: FDS completed successfully (CHID: R5_CHAMBRE1_OUVERTE)

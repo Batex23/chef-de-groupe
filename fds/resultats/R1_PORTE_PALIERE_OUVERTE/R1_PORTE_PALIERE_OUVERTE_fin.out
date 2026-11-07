@@ -1,72 +1,73 @@
-E-01 s, Total Time:    1198.21 s
-       Pressure Iterations:      2
-       Maximum Velocity Error:  0.37E-01 on Mesh   1 at (  12   0  11)
-       Maximum Pressure Error:  0.88E+02 on Mesh   1 at (  11   9   3)
+rations:      1
+       Maximum Velocity Error:  0.68E-01 on Mesh   2 at (  13  11  25)
+       Maximum Pressure Error:  0.99E+01 on Mesh   1 at (   4   8  13)
        ---------------------------------------------------------------
        Mesh    1
-       Max CFL number:  0.71E+00 at (  19,   2,  11)
-       Max divergence:  0.91E+01 at (  11,   7,   3)
-       Min divergence: -0.36E+01 at (  11,   7,   4)
-       Max VN number:   0.93E+00 at (  19,   1,  11)
+       Max CFL number:  0.61E+00 at (   4,   8,   9)
+       Max divergence:  0.23E+01 at (  10,   6,   3)
+       Min divergence: -0.81E+00 at (   4,   7,   4)
+       Max VN number:   0.67E+00 at (   7,   1,  11)
        Mesh    2
-       Max CFL number:  0.23E+00 at (  13,  25,  11)
-       Max divergence:  0.14E+00 at (   7,  23,   9)
-       Min divergence: -0.17E+00 at (   7,  23,  10)
-       Max VN number:   0.17E+00 at (  23,  25,  10)
+       Max CFL number:  0.87E+00 at (  13,   5,  25)
+       Max divergence:  0.25E+00 at (  10,   8,  16)
+       Min divergence: -0.32E+00 at (  12,  10,  11)
+       Max VN number:   0.51E+00 at (  18,  10,  12)
        Mesh    3
-       Max CFL number:  0.83E+00 at (  10,   8,  18)
-       Max divergence:  0.20E+01 at (  10,  10,  10)
-       Min divergence: -0.15E+01 at (   8,  10,  11)
-       Max VN number:   0.93E+00 at (  18,  10,  12)
-       Mesh    4
-       Max CFL number:  0.72E-01 at (   1,  10,  17)
-       Max divergence:  0.27E-02 at (   5,  10,   9)
-       Min divergence: -0.73E-03 at (   2,  10,  16)
-       Max VN number:   0.36E-01 at (   3,  10,  24)
-       Mesh    5
-       Max CFL number:  0.29E+00 at (  15,   4,  40)
-       Max divergence:  0.14E+00 at (  14,   4,  49)
-       Min divergence: -0.21E+00 at (  15,   4,  47)
-       Max VN number:   0.36E+00 at (  14,   1,  64)
+       Max CFL number:  0.33E+00 at (  15,   4,  40)
+       Max divergence:  0.58E-01 at (  15,   3,  48)
+       Min divergence: -0.69E-01 at (  15,   2,  49)
+       Max VN number:   0.23E+00 at (  15,   3,  54)
  
-       Time Step   59186   November  3, 2026  04:38:02
-       Step Size:    0.168E-01 s, Total Time:    1200.00 s
-       Pressure Iterations:      2
-       Maximum Velocity Error:  0.18E-01 on Mesh   1 at (  10   7   2)
-       Maximum Pressure Error:  0.22E+03 on Mesh   1 at (  10   7   3)
+       Time Step   81200   November  7, 2026  19:54:46
+       Step Size:    0.332E-01 s, Total Time:    1799.30 s
+       Pressure Iterations:      1
+       Maximum Velocity Error:  0.65E-01 on Mesh   2 at (  10  11  23)
+       Maximum Pressure Error:  0.66E+01 on Mesh   2 at (  19   4  24)
        ---------------------------------------------------------------
        Mesh    1
-       Max CFL number:  0.55E+00 at (  18,   2,  11)
-       Max divergence:  0.91E+01 at (   4,   4,   3)
-       Min divergence: -0.21E+01 at (   5,   9,   5)
-       Max VN number:   0.62E+00 at (   7,   1,  11)
+       Max CFL number:  0.52E+00 at (   2,   8,   7)
+       Max divergence:  0.19E+01 at (   5,   7,   3)
+       Min divergence: -0.12E+01 at (   5,   8,   4)
+       Max VN number:   0.64E+00 at (   8,   1,  11)
        Mesh    2
-       Max CFL number:  0.22E+00 at (   2,  29,  13)
-       Max divergence:  0.10E+00 at (   5,  23,   9)
-       Min divergence: -0.20E+00 at (   7,  23,  10)
-       Max VN number:   0.19E+00 at (   5,  24,   1)
+       Max CFL number:  0.91E+00 at (  19,   5,  25)
+       Max divergence:  0.18E+00 at (  10,   9,  10)
+       Min divergence: -0.22E+00 at (  19,   5,  25)
+       Max VN number:   0.59E+00 at (  18,  10,  12)
        Mesh    3
-       Max CFL number:  0.64E+00 at (  22,   7,  13)
-       Max divergence:  0.17E+01 at (  10,  10,  10)
-       Min divergence: -0.19E+01 at (  19,  10,  12)
-       Max VN number:   0.54E+00 at (  18,  10,  12)
-       Mesh    4
-       Max CFL number:  0.61E-01 at (   1,  10,  13)
-       Max divergence:  0.27E-02 at (   5,  10,  10)
-       Min divergence: -0.54E-03 at (   1,  10,  15)
-       Max VN number:   0.40E-01 at (   1,  10,  15)
-       Mesh    5
-       Max CFL number:  0.25E+00 at (  15,   4,  40)
-       Max divergence:  0.11E+00 at (  15,   3,  51)
-       Min divergence: -0.16E+00 at (  14,   4,  49)
-       Max VN number:   0.19E+00 at (  15,   3,  63)
+       Max CFL number:  0.37E+00 at (  15,   4,  40)
+       Max divergence:  0.34E-01 at (  15,   4,  51)
+       Min divergence: -0.75E-01 at (  15,   2,  50)
+       Max VN number:   0.39E+00 at (  14,   1,  64)
+ 
+       Time Step   81220   November  7, 2026  19:54:51
+       Step Size:    0.364E-01 s, Total Time:    1800.00 s
+       Pressure Iterations:      2
+       Maximum Velocity Error:  0.18E-01 on Mesh   2 at (  14  11  22)
+       Maximum Pressure Error:  0.11E+02 on Mesh   1 at (  10   5   3)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.64E+00 at (  10,  14,  13)
+       Max divergence:  0.18E+01 at (   4,   7,   3)
+       Min divergence: -0.80E+00 at (   4,   8,   4)
+       Max VN number:   0.76E+00 at (  20,   1,  11)
+       Mesh    2
+       Max CFL number:  0.84E+00 at (  18,   5,  25)
+       Max divergence:  0.21E+00 at (  21,   5,  19)
+       Min divergence: -0.27E+00 at (  23,  10,  12)
+       Max VN number:   0.64E+00 at (  18,  10,  12)
+       Mesh    3
+       Max CFL number:  0.41E+00 at (  15,   4,  40)
+       Max divergence:  0.48E-01 at (  14,   2,  48)
+       Min divergence: -0.73E-01 at (  15,   2,  50)
+       Max VN number:   0.34E+00 at (  15,   2,  50)
  
 
 
  DEVICE Activation Times
 
-   1  BRIS_VITRE_SEJ1                                                120.2 s
-   2  BRIS_VITRE_SEJ2                                                203.4 s
+   1  BRIS_VITRE_SEJ1                                                128.4 s
+   2  BRIS_VITRE_SEJ2                                                200.8 s
    3  BRIS_VITRE_CUI                                              No Activation
    4  BRIS_VITRE_CH1                                              No Activation
  219  OUV_PORTE_PALIERE->OUT                                          90.0 s
@@ -77,7 +78,7 @@ E-01 s, Total Time:    1198.21 s
  224  OUV_PORTE_IMMEUBLE->OUT                                        540.0 s
 
 
- Time Stepping Wall Clock Time (s):    18806.014
- Total Elapsed Wall Clock Time (s):    18809.764
+ Time Stepping Wall Clock Time (s):    20430.698
+ Total Elapsed Wall Clock Time (s):    20434.720
 
 STOP: FDS completed successfully (CHID: R1_PORTE_PALIERE_OUVERTE)

@@ -4,8 +4,26 @@ const fs = require('fs'), path = require('path');
 const SIM = require(path.join(__dirname, '../../src/core/sim.js'));
 const BASE = Object.assign({}, SIM.CFG);
 const [casArg, nArg] = process.argv.slice(2);
-const OUV = { R0_BASE: { PALIERE: 600, IMMEUBLE: 540, EXUTOIRE: null }, R1_PORTE_PALIERE_OUVERTE: { PALIERE: 90, IMMEUBLE: 540, EXUTOIRE: null },
-  R2_PORTE_OUVERTE_EXUTOIRE: { PALIERE: 90, IMMEUBLE: 540, EXUTOIRE: 660 } };
+const OUV = {
+  R0_BASE: { PALIERE: 600, IMMEUBLE: 540 },
+  R1_PORTE_PALIERE_OUVERTE: { PALIERE: 90, IMMEUBLE: 540 },
+  R2_PORTE_OUVERTE_EXUTOIRE: { PALIERE: 90, IMMEUBLE: 540, EXUTOIRE: 660 },
+  R3_SOUS_VENTILE: { PALIERE: 600, IMMEUBLE: 540, _noGlass: true },
+  R4_ATTAQUE: { PALIERE: 600, IMMEUBLE: 540 },
+  R5_CHAMBRE1_OUVERTE: { PALIERE: 600, IMMEUBLE: 540, CH1_COU: 0 },
+  R6_VPP_APRES_ATTAQUE: { PALIERE: 90, IMMEUBLE: 540, EXUTOIRE: 720, _vpp: 840 },
+  R7_VPP_ATTAQUE: { PALIERE: 90, IMMEUBLE: 540, EXUTOIRE: 640, _vpp: 660 },
+  R8_VPP_SANS_EXUTOIRE: { PALIERE: 90, IMMEUBLE: 540, _vpp: 840 },
+};
+// conditions communes : chambre 2 ouverte des le debut, chambres 1 et 3 fermees
+function applyOuv(W, ouv) {
+  for (const o of W.O) if (o.id === 'CH2_COU') o.open = true;
+  for (const id in ouv) {
+    if (id === '_noGlass') { for (const o of W.O) if (o.glass) o.noBreak = true; continue; }
+    if (id === '_vpp') { if (W.t >= ouv[id]) W.vpp = true; continue; }
+    const o = W.O.find(x => x.id === id); if (o && W.t >= ouv[id]) o.open = true;
+  }
+}
 const csv = f => { const L = fs.readFileSync(f, 'utf8').trim().split('\n'); const h = L[1].split(','); const rows = L.slice(2).map(l => l.split(',').map(Number)); const col = n => rows.map(r => r[h.indexOf(n)]); return { h, rows, col }; };
 const TARGETS = [
   ['SEJ', 'T', 1], ['COU', 'T', 1], ['CH2', 'T', 0.7], ['CH1', 'T', 0.4], ['SEJ', 'H', 120], ['COU', 'H', 120], ['CH2', 'H', 60],
@@ -29,7 +47,7 @@ function runCase(C) {
   const out = {}; for (const k in C.ref) out[k] = [];
   let i = 0;
   while (i < C.tF.length) {
-    for (const id in C.ouv) if (C.ouv[id] != null && W.t >= C.ouv[id]) O(id).open = true;
+    applyOuv(W, C.ouv);
     if (W.t >= C.tF[i] - 1e-6) {
       for (const [z, k] of TARGETS) {
         let v;
@@ -46,8 +64,9 @@ function runCase(C) {
   return J;
 }
 function run(p) { Object.assign(SIM.CFG, BASE, p); return CASES.reduce((s, C) => s + runCase(C), 0) / CASES.length; }
-const SPACE = { radLoss: [0.3, 0.6], hConv: [0.006, 0.03], wallC: [40, 160], entK: [0.8, 4], Cd: [0.6, 0.85], leakK: [0.05, 0.8], glassBreakK: [450, 560] };
-let best = { J: run({}), p: {} };
+const SPACE = { vppCage: [1, 6], vppApt: [0.5, 3.5], radLoss: [0.3, 0.6], hConv: [0.006, 0.03], wallC: [40, 160], entK: [0.8, 4], Cd: [0.6, 0.85], leakK: [0.05, 0.8], glassBreakK: [450, 560] };
+let best = { J: run({}), p: Object.fromEntries(Object.keys(SPACE).map(k => [k, BASE[k]])) };
+console.log('par cas', CASES.map(C => C.cas.slice(0, 2) + ' ' + (Object.assign(SIM.CFG, BASE), runCase(C)).toFixed(0)).join(' | '));
 console.log('depart', best.J.toFixed(1));
 const N = +(nArg || 300);
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -55,9 +74,10 @@ for (let n = 0; n < N; n++) {
   const p = {};
   for (const k in SPACE) {
     const [a, b] = SPACE[k];
-    p[k] = n < N * 0.4 || !best.p[k] ? rnd(a, b) : Math.min(b, Math.max(a, best.p[k] + (Math.random() - 0.5) * (b - a) * 0.15));
+    p[k] = n < N * 0.25 || best.p[k] == null ? rnd(a, b) : Math.min(b, Math.max(a, best.p[k] + (Math.random() - 0.5) * (b - a) * 0.15));
   }
   const J = run(p);
   if (J < best.J) { best = { J, p }; console.log(n, J.toFixed(1), JSON.stringify(Object.fromEntries(Object.entries(p).map(([k, v]) => [k, +v.toFixed(4)])))); }
 }
+Object.assign(SIM.CFG, BASE, best.p); console.log('par cas', CASES.map(C => C.cas.slice(0, 2) + ' ' + runCase(C).toFixed(0)).join(' | '));
 console.log('MEILLEUR', JSON.stringify(Object.fromEntries(Object.entries(best.p).map(([k, v]) => [k, +v.toFixed(4)]))), best.J.toFixed(1));

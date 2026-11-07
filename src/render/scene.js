@@ -12,11 +12,12 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { pbr, plain, setTextureResolution } from './materials.js';
+import { createFdsSmoke } from './fdsvol.js';
 import { Batch, wallGeometry, wallMatrix, windowKit, balcony, genericBuilding, CLIP } from './building.js';
 const GAME = window.GAME;
 const { layerRel, conditionsAt, roomOnFire, clamp } = SIM;
 const S3 = window.S3 = {};
-let renderer, scene, camera, controls, quality = 'standard';
+let renderer, scene, camera, controls, quality = 'standard', fds = null;
 const pickables = [];
 const R3 = 7.8, LV = 2.6;
 const TEAM_COLORS = { BAT1: '#ff8a3d', BAL1: '#35c4e0', BAT2: '#f5c542', BAL2: '#4fd1a5' };
@@ -147,6 +148,15 @@ S3.init = function (canvas, q) {
   } catch (e) { console.warn('environnement indisponible', e); }
   let fxi = ''; try { fxi = localStorage.getItem('cdg-fx') || ''; } catch (e) { }
   if (quality === 'standard' && !fxi.includes('nocomposer')) buildComposer();
+  // fumee des calculs FDS (si les donnees sont publiees avec le jeu)
+  if (!fxi.includes('nofds') && typeof DecompressionStream !== 'undefined') {
+    fds = S3.fds = createFdsSmoke(T, scene, { R3, light: quality !== 'standard' });
+    fetch('data/fds/index.json').then(r => r.ok ? r.json() : null).then(ix => {
+      if (!ix || !ix.cas || !ix.cas.length) return;
+      const first = 'R1_PORTE_PALIERE_OUVERTE', list = ix.cas.includes(first) ? [first, ...ix.cas.filter(c => c !== first)] : ix.cas;
+      fds.start(list);
+    }).catch(() => {});
+  }
   S3.resize();
   window.addEventListener('resize', S3.resize);
 };
@@ -721,12 +731,25 @@ S3.update = function (dtReal, now) {
   for (const id in S3.doors) S3.doors[id].visible = !GAME.isOpen(id);
   for (const s of [0, 1]) { const lf = cageDoor.userData['leaf' + s]; const tgt = GAME.isOpen('IMMEUBLE') ? lf.userData.dir * 1.35 : 0; lf.rotation.y += (tgt - lf.rotation.y) * Math.min(1, dtReal * 3); }
   exuLid.rotation.x = GAME.isOpen('EXUTOIRE') ? -1.2 : 0;
+  // calcul FDS le plus proche des decisions du joueur
+  let fdsOK = false;
+  if (fds) {
+    const ev = G.fdsEv || (G.fdsEv = {});
+    if (ev.exu == null && GAME.isOpen('EXUTOIRE')) ev.exu = W.t;
+    if (ev.paliereClosed == null && W.t > 100 && !GAME.isOpen('PALIERE')) ev.paliereClosed = W.t;
+    ev.attack = G.attackT; ev.vpp = G.vppT;
+    fds.setCut(cutK > 0.5, 1.15);
+    fds.update(ev, W.t, dtReal * (G.speed || 1));
+    const fi = fds.info(); fdsOK = fi.ok;
+    const bd = document.getElementById('fds-badge');
+    if (bd) { bd.hidden = !fdsOK; if (fdsOK) { const txt = `<b>FDS</b> ${fi.id.slice(0, 2)} · ${fi.label} · t = ${Math.floor(fi.tf / 60)} min`; if (bd._t !== txt) { bd.innerHTML = txt; bd._t = txt; } } }
+  }
   // brouillard / connaissance du R+3 (visible seulement en coupe)
   for (const r in fog) {
     const s = G.K.rooms[r];
     fog[r].visible = cutK > 0.5 && !s; fog[r].userData.q.visible = cutK > 0.5 && !s;
     const sv = smokeVol[r];
-    if (s && cutK > 0.5 && s.zr < 2.4) {
+    if (s && cutK > 0.5 && s.zr < 2.4 && !fdsOK) {
       const [x1, x2, y1, y2] = ROOM_RECT[r]; const top = Math.min(2.6, 1.15 + 0.1), bot = Math.min(s.zr, top - 0.05);
       sv.visible = true; sv.scale.y = Math.max(0.05, top - bot); sv.position.set((x1 + x2) / 2, R3 + bot + (top - bot) / 2, -(y1 + y2) / 2);
       sv.material.opacity = s.onFire ? 0.35 : clamp(0.25 + s.sev * 0.18, 0.2, 0.75);
@@ -746,7 +769,7 @@ S3.update = function (dtReal, now) {
     const e = W.ext[id];
     const w = FRONT_WIN.concat(BACK_WIN).find(x => x[0] === id), front = !o.rear;
     if (o.open && e && e.m > 0.02) {
-      const rate = clamp(e.m * 14, 4, 60) * (quality === 'standard' ? 1 : 0.45);
+      const rate = clamp(e.m * 14, 4, 60) * (quality === 'standard' ? 1 : 0.45) * (fdsOK ? 0.3 : 1);
       const nEm = rate * dtReal + (Math.random() < (rate * dtReal) % 1 ? 1 : 0);
       const dark = e.soot / Math.max(e.m, 1e-3) > 0.0015;
       for (let k = 0; k < Math.floor(nEm); k++) {

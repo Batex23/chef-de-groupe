@@ -635,6 +635,7 @@ function doAttack(a, s, dt) {
   }
   if (!waterOK()) { a.flowing = false; a.status = 'LANCE À SEC'; return; }
   a.flowing = true; a.status = `Attaque ${a.lance} : ${ROOM_NAMES[target]}`;
+  if (G.attackT == null) G.attackT = G.W.t;   // debut de l'extinction (choix du calcul FDS le plus proche)
   if (!s.announced) { s.announced = true; report(a, `${roomReportText(target, snapshotRoom(target))} J'attaque.`); }
 }
 // ---- incidents de securite (binome en detresse)

@@ -1,0 +1,84 @@
+terations:      1
+       Maximum Velocity Error:  0.99E-01 on Mesh   2 at (  14  11  24)
+       Maximum Pressure Error:  0.96E+01 on Mesh   1 at (   8   8   3)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.66E+00 at (   4,   8,   9)
+       Max divergence:  0.15E+01 at (   4,   6,   3)
+       Min divergence: -0.82E+00 at (   4,   7,   4)
+       Max VN number:   0.67E+00 at (   9,   1,  11)
+       Mesh    2
+       Max CFL number:  0.88E+00 at (  13,   4,  25)
+       Max divergence:  0.20E+00 at (  24,  10,  10)
+       Min divergence: -0.23E+00 at (  23,  10,  11)
+       Max VN number:   0.54E+00 at (  23,  10,  12)
+       Mesh    3
+       Max CFL number:  0.64E+00 at (  12,   2,  63)
+       Max divergence:  0.94E-01 at (  15,   1,  48)
+       Min divergence: -0.15E+00 at (  15,   4,  49)
+       Max VN number:   0.53E+00 at (   7,  18,  61)
+ 
+       Time Step   80300   November  3, 2026  23:12:08
+       Step Size:    0.357E-01 s, Total Time:    1796.67 s
+       Pressure Iterations:      2
+       Maximum Velocity Error:  0.28E-01 on Mesh   2 at (  13  11  21)
+       Maximum Pressure Error:  0.54E+01 on Mesh   1 at (   9  12  13)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.58E+00 at (  19,   1,  11)
+       Max divergence:  0.21E+01 at (  12,   6,   3)
+       Min divergence: -0.13E+01 at (  11,   8,   4)
+       Max VN number:   0.72E+00 at (   8,   1,  11)
+       Mesh    2
+       Max CFL number:  0.80E+00 at (  11,   3,  24)
+       Max divergence:  0.25E+00 at (  12,   9,  10)
+       Min divergence: -0.30E+00 at (   8,  10,  12)
+       Max VN number:   0.61E+00 at (   8,  10,  12)
+       Mesh    3
+       Max CFL number:  0.49E+00 at (   5,   1,  65)
+       Max divergence:  0.11E+00 at (  15,   5,  50)
+       Min divergence: -0.15E+00 at (  15,   4,  49)
+       Max VN number:   0.47E+00 at (   7,   1,  63)
+ 
+       Time Step   80392   November  3, 2026  23:12:31
+       Step Size:    0.191E-02 s, Total Time:    1800.00 s
+       Pressure Iterations:      1
+       Maximum Velocity Error:  0.26E-01 on Mesh   2 at (  23  11  25)
+       Maximum Pressure Error:  0.46E+03 on Mesh   1 at (  10   6   3)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.34E-01 at (   8,   2,  13)
+       Max divergence:  0.19E+01 at (   5,   6,   3)
+       Min divergence: -0.10E+01 at (  11,   6,   4)
+       Max VN number:   0.38E-01 at (  10,   1,  11)
+       Mesh    2
+       Max CFL number:  0.44E-01 at (  20,   8,  23)
+       Max divergence:  0.21E+00 at (  10,   7,  21)
+       Min divergence: -0.25E+00 at (  23,  10,  12)
+       Max VN number:   0.35E-01 at (  23,  10,  12)
+       Mesh    3
+       Max CFL number:  0.27E-01 at (   8,  10,  66)
+       Max divergence:  0.94E-01 at (  14,   2,  55)
+       Min divergence: -0.12E+00 at (  14,   3,  53)
+       Max VN number:   0.18E-01 at (   2,   1,  61)
+ 
+
+
+ DEVICE Activation Times
+
+   1  BRIS_VITRE_SEJ1                                                128.4 s
+   2  BRIS_VITRE_SEJ2                                                200.8 s
+   3  BRIS_VITRE_CUI                                              No Activation
+   4  BRIS_VITRE_CH1                                              No Activation
+ 219  OUV_PORTE_PALIERE->OUT                                          90.0 s
+ 220  OUV_PORTE_CH1->OUT                                          No Activation
+ 221  OUV_PORTE_CH2->OUT                                               0.1 s
+ 222  OUV_PORTE_CH3->OUT                                          No Activation
+ 223  OUV_EXUTOIRE->OUT                                              660.0 s
+ 224  OUV_PORTE_IMMEUBLE->OUT                                        540.0 s
+
+
+ Time Stepping Wall Clock Time (s):    20469.567
+ Total Elapsed Wall Clock Time (s):    20473.781
+
+STOP: FDS completed successfully (CHID: R2_PORTE_OUVERTE_EXUTOIRE)

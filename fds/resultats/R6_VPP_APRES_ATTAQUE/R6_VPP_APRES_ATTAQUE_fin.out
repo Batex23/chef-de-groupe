@@ -1,0 +1,86 @@
+,  12)
+       Mesh    3
+       Max CFL number:  0.58E+00 at (   9,   9,   4)
+       Max divergence:  0.14E-02 at (   1,  18,  57)
+       Min divergence: -0.20E-02 at (   2,   1,  65)
+       Max VN number:   0.46E+00 at (  12,   8,   1)
+       Mesh    4
+       Max CFL number:  0.81E+00 at (  10,  10,   2)
+       Max divergence:  0.20E-03 at (   8,  10,   6)
+       Min divergence: -0.14E-03 at (   9,  10,   2)
+       Max VN number:   0.43E+00 at (  11,  11,   3)
+ 
+       Time Step   96700   November  5, 2026  14:07:55
+       Step Size:    0.154E-01 s, Total Time:    1798.86 s
+       Pressure Iterations:      1
+       Maximum Velocity Error:  0.62E-01 on Mesh   3 at (   7  19   5)
+       Maximum Pressure Error:  0.26E+00 on Mesh   2 at (  12   1  19)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.22E+00 at (   1,  29,   1)
+       Max divergence:  0.29E-01 at (   5,   2,  11)
+       Min divergence: -0.33E-01 at (  10,   3,  13)
+       Max VN number:   0.22E+00 at (   6,   1,  11)
+       Mesh    2
+       Max CFL number:  0.20E+00 at (  17,   9,  10)
+       Max divergence:  0.24E-01 at (   7,  10,  14)
+       Min divergence: -0.33E-01 at (   9,  10,  12)
+       Max VN number:   0.21E+00 at (   7,  10,  13)
+       Mesh    3
+       Max CFL number:  0.60E+00 at (   8,   5,   4)
+       Max divergence:  0.20E-02 at (   9,   1,  49)
+       Min divergence: -0.29E-02 at (   8,   1,  50)
+       Max VN number:   0.62E+00 at (  10,   8,   1)
+       Mesh    4
+       Max CFL number:  0.82E+00 at (   9,  10,   5)
+       Max divergence:  0.21E-03 at (   9,  10,   6)
+       Min divergence: -0.15E-03 at (   8,  10,   2)
+       Max VN number:   0.51E+00 at (  11,  11,   3)
+ 
+       Time Step   96774   November  5, 2026  14:08:14
+       Step Size:    0.153E-01 s, Total Time:    1800.00 s
+       Pressure Iterations:      2
+       Maximum Velocity Error:  0.49E-01 on Mesh   4 at (  10   0   5)
+       Maximum Pressure Error:  0.23E+00 on Mesh   2 at (  16   1  24)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.23E+00 at (   1,  29,   1)
+       Max divergence:  0.40E-01 at (   9,   2,  13)
+       Min divergence: -0.65E-01 at (   9,   3,  13)
+       Max VN number:   0.17E+00 at (  17,  27,  13)
+       Mesh    2
+       Max CFL number:  0.22E+00 at (  16,   8,  10)
+       Max divergence:  0.33E-01 at (   4,  10,  11)
+       Min divergence: -0.52E-01 at (   6,  10,  11)
+       Max VN number:   0.16E+00 at (   5,  10,  11)
+       Mesh    3
+       Max CFL number:  0.61E+00 at (   9,   7,   5)
+       Max divergence:  0.95E-03 at (   1,  11,  58)
+       Min divergence: -0.15E-02 at (   2,   1,  61)
+       Max VN number:   0.44E+00 at (  13,  12,   1)
+       Mesh    4
+       Max CFL number:  0.80E+00 at (   8,  10,   5)
+       Max divergence:  0.19E-03 at (   6,   2,  14)
+       Min divergence: -0.14E-03 at (   8,  10,   2)
+       Max VN number:   0.44E+00 at (   8,  11,   6)
+ 
+
+
+ DEVICE Activation Times
+
+   1  BRIS_VITRE_SEJ1                                                120.9 s
+   2  BRIS_VITRE_SEJ2                                                200.8 s
+   3  BRIS_VITRE_CUI                                              No Activation
+   4  BRIS_VITRE_CH1                                              No Activation
+ 220  OUV_PORTE_PALIERE->OUT                                          90.0 s
+ 221  OUV_PORTE_CH1->OUT                                          No Activation
+ 222  OUV_PORTE_CH2->OUT                                               0.1 s
+ 223  OUV_PORTE_CH3->OUT                                          No Activation
+ 224  OUV_EXUTOIRE->OUT                                              720.0 s
+ 225  OUV_PORTE_IMMEUBLE->OUT                                        540.0 s
+
+
+ Time Stepping Wall Clock Time (s):    25559.887
+ Total Elapsed Wall Clock Time (s):    25566.646
+
+STOP: FDS completed successfully (CHID: R6_VPP_APRES_ATTAQUE)

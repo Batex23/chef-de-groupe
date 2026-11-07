@@ -85,3 +85,52 @@ Une recherche commune sur R0 et R1 ne trouve pas mieux : le calage est conservé
 - Cage d'escalier : dans R1, FDS amène des fumées jusqu'au R+2 (CO jusqu'à 400 ppm), le jeu non ; et le R+4 est trop froid de 24 °C dans le jeu. Il faut découper la cage par niveau.
 - La cage d'escalier reste un seul volume : la température y tombe d'un coup quand la couche remonte, là où FDS décroît en douceur. Le découpage par niveau est prévu.
 - La puissance du canapé est imposée dans FDS : l'embrasement des autres meubles se cale à part. Dans le jeu, il est déclenché quand la puissance dépasse le seuil de Thomas pendant 45 s.
+
+## Calage sur les neuf calculs
+
+Les neuf cas complets (R0 à R8) servent maintenant au calage (`node calibrage/cale.js <cas,...> <iterations>`).
+Une recherche sur les neuf cas ensemble ne fait gagner que 4 % sur l'écart global. Elle porte surtout sur la VPP.
+Les réglages qui gagnaient sur les températures (entraînement, fuites) éteignaient le feu du jeu par manque d'air. On ne les a donc pas retenus.
+Seuls les débits de la VPP ont été repris : `vppCage` 4,3 kg/s et `vppApt` 0,5 kg/s.
+Écart moyen par cas après cette reprise :
+
+| Cas | R0 | R1 | R2 | R3 | R4 | R5 | R6 | R7 | R8 |
+|---|---|---|---|---|---|---|---|---|---|
+| J | 274 | 291 | 268 | 1316 | 263 | 277 | 403 | 414 | 461 |
+
+R3 (sous-ventilé, vitrages intacts) reste mal reproduit par le modèle de zones. C'est un cas de référence : le jeu ne le sélectionne pas.
+
+## Fumée FDS dans le jeu
+
+`fds2jeu.py` convertit les sorties Plot3D d'un cas en fichiers légers pour le jeu :
+
+```
+python3 fds2jeu.py <dossier_du_cas_avec_.smv_et_.q> ../data/fds/<CAS>
+```
+
+Le script garde un nœud sur deux dans le logement (maille de 0,4 m). Il garde la pleine résolution (0,2 m) en façade et dans la cage.
+Chaque grandeur (T, visibilité, CO, O2, puissance volumique) est codée sur un octet, puis le tout est compressé.
+Un calcul de 30 min pèse environ 3 Mo, 25 Mo pour les neuf cas. `data/fds/index.json` liste les cas publiés.
+
+Dans le jeu (`src/render/fdsvol.js`), chaque maillage devient un volume rendu par lancer de rayons :
+
+- l'opacité vient de la visibilité FDS ;
+- les flammes viennent de la puissance volumique ;
+- la lueur vient de la température.
+
+Le calcul affiché est celui dont les décisions ressemblent le plus à celles du joueur :
+
+| Décision du joueur | Calcul |
+|---|---|
+| Aucune | R1 (porte palière laissée ouverte par l'occupante) |
+| Porte palière refermée | R0 |
+| Exutoire ouvert | R2 |
+| Attaque | R4 |
+| VPP avec exutoire, après l'attaque | R6 |
+| VPP avec exutoire, avant l'attaque | R7 |
+| VPP sans exutoire | R8 |
+
+Le temps FDS est recalé sur l'instant de la décision : `t_FDS = t_décision_FDS + (t − t_décision_joueur)`. Le passage d'un calcul à l'autre se fond sur 12 s.
+Un bandeau « FDS R… » indique le calcul affiché.
+Dans la vue en coupe, la densité visuelle est allégée pour qu'on voie encore les binômes et les victimes.
+`S3.fds.sample(x, y, z)` lit les grandeurs FDS en un point de la scène. Il servira à la caméra thermique et au débriefing.

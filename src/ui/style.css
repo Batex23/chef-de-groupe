@@ -299,3 +299,6 @@ tr.urgent td { color: #ff8a90; font-weight: 600; }
 .pc[aria-pressed="true"] { border-color: #fff; transform: scale(1.18); }
 .bpwrap { position: relative; }
 #st-text { position: absolute; z-index: 2; width: 220px; background: #0d141c; color: var(--ink); border: 2px solid var(--cmd); border-radius: 4px; padding: 5px 7px; font: 600 13px var(--f-body); }
+
+.fdsbadge { align-self: center; font: 600 12px/1.2 ui-monospace, monospace; color: var(--soft, #c3cfdb); background: rgba(11,19,34,.82); border: 1px solid #2d3b4c; border-radius: 5px; padding: 6px 9px; }
+.fdsbadge b { color: #f08c2a; font-weight: 700; }

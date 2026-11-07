@@ -26,8 +26,8 @@ const CFG = {
   smoulderKW: 30,     // foyer residuel (braises sous les debris) apres abattement [CAL]
   repriseMin: 360,    // delai mini de reprise d'un foyer residuel non deblaye (s) [CAL]
   repriseVar: 300,    // dispersion du delai de reprise (s) [CAL]
-  vppCage: 3.0,       // kg/s extraits de la cage par le VPP (porte d'immeuble ouverte + exutoire) [CAL]
-  vppApt: 1.6,        // kg/s extraits du logement (porte paliere + fenetre ouvertes) [CAL]
+  vppCage: 4.3,       // kg/s extraits de la cage par le VPP (porte d'immeuble ouverte + exutoire) [CAL]
+  vppApt: 0.5,        // kg/s extraits du logement (porte paliere + fenetre ouvertes) [CAL]
   flashHold: 45,
   extIgnK: 450,       // temperature de sortie minimale pour que les imbrules brulent en facade (K) [CAL]      // s au-dela du seuil de Thomas avant embrasement generalise [CAL]
   entK: 1.85,          // multiplicateur de l'entrainement d'air du panache (Heskestad) [CAL]
@@ -314,7 +314,7 @@ function step(W) {
 
   // ---- 4. evenements physiques
   for (const o of W.O) {
-    if (o.glass && !o.open && !o.broken) {
+    if (o.glass && !o.open && !o.broken && !o.noBreak) {
       const z = Z[o.a];
       if (ifcAbs(z) < o.zt - 0.2 && z.Tu > CFG.glassBreakK) {
         o.open = true; o.broken = true;
