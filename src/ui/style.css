@@ -302,3 +302,8 @@ tr.urgent td { color: #ff8a90; font-weight: 600; }
 
 .fdsbadge { align-self: center; font: 600 12px/1.2 ui-monospace, monospace; color: var(--soft, #c3cfdb); background: rgba(11,19,34,.82); border: 1px solid #2d3b4c; border-radius: 5px; padding: 6px 9px; }
 .fdsbadge b { color: #f08c2a; font-weight: 700; }
+.cutlv { position: fixed; right: 16px; bottom: 64px; z-index: 30; display: flex; flex-direction: column; gap: 3px; background: rgba(11,19,34,.86); border: 1px solid #2d3b4c; border-radius: 6px; padding: 6px; }
+.cutlv b { font: 700 11px/1 ui-monospace, monospace; color: #8d9db0; text-align: center; padding: 2px 0 4px; letter-spacing: .06em; text-transform: uppercase; }
+.cutlv[hidden] { display: none; }
+.cutlv .btn { padding: 7px 12px; min-width: 0; }
+.cutlv .btn[aria-pressed="true"] { background: #9a72ff; color: #fff; border-color: #9a72ff; }

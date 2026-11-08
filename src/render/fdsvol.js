@@ -136,16 +136,19 @@ export function createFdsSmoke(T, scene, opts) {
     for (const M of d.meshes) {
       if (fx < M.nmin[0] || fx > M.nmax[0] || fy < M.nmin[1] || fy > M.nmax[1] || fz < M.nmin[2] || fz > M.nmax[2]) continue;
       const near = (arr, v) => { let b = 0; for (let i = 1; i < arr.length; i++) if (Math.abs(arr[i] - v) < Math.abs(arr[b] - v)) b = i; return b; };
-      const i = near(M.x, fx), j = near(M.y, fy), k = near(M.z, fz), [f] = frameAt(d, tf);
-      const v = (k * M.n[1] + j) * M.n[0] + i, o = f * M.nq * M.nv, dec = d.meta.decodage, g = d.meta.grandeurs, out = {};
-      g.forEach((q, qi) => { const D = dec[q]; out[q] = D.a + D.b * Math.pow(M.raw[o + qi * M.nv + v] / 255, D.p); });
+      const i = near(M.x, fx), j = near(M.y, fy), k = near(M.z, fz), [fa, fb, w] = frameAt(d, tf);
+      const v = (k * M.n[1] + j) * M.n[0] + i, dec = d.meta.decodage, g = d.meta.grandeurs, out = {};
+      g.forEach((q, qi) => { const D = dec[q], val = f => D.a + D.b * Math.pow(M.raw[f * M.nq * M.nv + qi * M.nv + v] / 255, D.p); out[q] = val(fa) * (1 - w) + val(fb) * w; });
       return out;
     }
     return null;
   }
 
   const api = {
-    CASES, pickCase, load, sample: (sx, sy, sz) => st.id ? sample(st.id, st.tf, sx, sy, sz) : null,
+    CASES, pickCase, load,
+    // lecture a un instant de jeu donne (utilisee par la simulation, y compris pendant le pre-calcul)
+    sampleAt(ev, t, sx, sy, sz) { let { id, tf } = pickCase(ev, t); if (!ready(id)) { id = 'R1_PORTE_PALIERE_OUVERTE'; tf = t; if (!ready(id)) return null; } return sample(id, tf, sx, sy, sz); },
+    sample: (sx, sy, sz) => st.id ? sample(st.id, st.tf, sx, sy, sz) : null,
     async start(list) {
       st.on = true;
       list = list.filter(id => CASES[id]);      // R3 et R5 : calculs de reference, non selectionnes en jeu

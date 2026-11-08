@@ -920,12 +920,54 @@ function tick(dt) {
     }
   }
   updateIncident(dt);
+  initiative();
   step(W);
   updateVictims(dt);
   updateNeighbour(dt);
   for (const e of W.events) onSimEvent(e);
   W.events.length = 0;
   if (W.t >= T_FIN_MAX && !G.ended) endGame('Durée maximale atteinte');
+}
+// ===========================================================================
+// INITIATIVE DES CHEFS D'AGRES : sans ordre du CDG, ils appliquent la doctrine
+// (sauvetage d'abord, etablissement, securite), le signalent et le debriefing le releve.
+// ===========================================================================
+const INIT_DELAY = 150;    // s sans ordre avant que le CA ne prenne l'initiative
+function initiative() {
+  if (G.W.t - (G.lastInit || 0) < 5) return;
+  G.lastInit = G.W.t;
+  const fire = ROOMS.some(r => hasFire(G.W, r));
+  const vict = G.victims.find(v => v.id !== 'V2' && !v.atRue && !v.carried);
+  const busy = m => G.actors.some(x => x.mission === m);
+  for (const a of G.actors) {
+    if (a.loc !== 'RUE' || a.mission || a.distress || a.lowAir || a.carry || (a.plan && a.plan.length) || G.moves[vehicleId(a)]) { a.idleT = null; continue; }
+    if (a.idleT == null) { a.idleT = G.W.t; continue; }
+    if (G.W.t - a.idleT < INIT_DELAY) continue;
+    let key = null, opts = { viaCA: true }, why = '';
+    if (a.kind === 'binome') {
+      if (a.role === 'BAT') {
+        if (vict && !busy('RECHERCHE')) { key = 'RECHERCHE'; why = 'reconnaissance et recherche de victimes au R+3, LDV en protection'; }
+        else if (fire && !busy('ATTAQUE')) { key = 'ATTAQUE'; opts.lance = 'LDV 500'; why = 'attaque du feu au R+3'; }
+        else if (G.r4.t0 != null && !G.r4.out && !busy('ATTAQUE_R4')) { key = 'ATTAQUE_R4'; opts.lance = 'LDV 500'; why = 'attaque du feu au R+4'; }
+        else if (!busy('R4')) { key = 'R4'; why = 'reconnaissance du R+4'; }
+      } else {
+        if (!G.alim && availableMissions(a).includes('ALIM')) { key = 'ALIM'; why = 'alimentation du FPT sur le PI'; }
+        else if (!busy('SECURITE')) { key = 'SECURITE'; why = 'binôme de sécurité au pied de l\'immeuble'; }
+      }
+    } else if (a.kind === 'echelle' && !a.stationed) {
+      const av = availableMissions(a);
+      const v2 = G.victims.find(v => v.id === 'V2');
+      if (v2 && !v2.atRue && (v2.mode === 'fenetre' || v2.mode === 'confine') && av.includes('PA_R4')) { key = 'PA_R4'; why = 'mise en station pour le voisin du R+4'; }
+      else if (av.includes('PA_RECO')) { key = 'PA_RECO'; why = 'reconnaissance de la façade'; }
+    } else if (a.kind === 'vsav' && !a.pec) { key = 'PEC'; why = 'prise en charge des victimes au pied de l\'immeuble'; }
+    if (!key || !availableMissions(a).includes(key)) { a.idleT = G.W.t; continue; }
+    const ca = 'CA ' + a.engin;
+    radio(ca, 'CDG', `Sans ordre de votre part depuis ${Math.round((G.W.t - a.idleT) / 60)} min, je prends l'initiative : ${a.kind === 'binome' ? a.label + ', ' : ''}${why}.`, 'alerte', CANAUX.TAC);
+    G.journal.push({ t: G.W.t, text: `Initiative du ${ca} faute d'ordre : ${why}.` });
+    penalty(3, `${ca} sans ordre pendant ${Math.round((G.W.t - a.idleT) / 60)} min : le CA a dû prendre l'initiative (${why}).`);
+    order(a, key, opts);
+    a.initiative = true; a.idleT = null;
+  }
 }
 function onSimEvent(e) {
   if (e.type === 'embrasement' || e.type === 'propagation') {

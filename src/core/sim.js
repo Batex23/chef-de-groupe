@@ -109,7 +109,11 @@ function visibilityU(z) {
 // Stratification de la cage (zone unique) : sous le niveau sinistre, les fumees
 // se refroidissent et se diluent en descendant. Profil provisoire [CAL : arbre FDS].
 function cageFactor(h) { return clamp(0.3 + 0.7 * h / 9.0, 0.3, 1); }
+// Conditions lues dans le calcul FDS le plus proche (branche par le rendu quand les donnees sont chargees).
+// Le modele de zones ne sert plus qu'en secours (donnees absentes, zone hors du domaine FDS).
+const FDS_HOOK = { fn: null };
 function conditionsAt(W, zid, hrel) {
+  if (FDS_HOOK.fn) { const c = FDS_HOOK.fn(zid, hrel, W.t); if (c) return c; }
   if (zid === 'CAGE') {
     const c = conditionsAtRaw(W, zid, hrel), k = cageFactor(hrel);
     if (k < 1 && c.smoke) { c.T = CFG.Tamb + (c.T - CFG.Tamb) * k; c.CO *= k; c.O2 = 20.9 - (20.9 - c.O2) * k; c.vis = Math.min(30, c.vis / k); }
@@ -397,6 +401,6 @@ function fedRate(c) {
   return r;
 }
 
-const SIM = { thomasQ, CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, visibilityU, fedRate, hasFire, hasResidual, roomOnFire, clamp };
+const SIM = { FDS_HOOK, thomasQ, CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, visibilityU, fedRate, hasFire, hasResidual, roomOnFire, clamp };
 if (typeof module !== "undefined") module.exports = SIM;
 if (typeof window !== "undefined") window.SIM = SIM;

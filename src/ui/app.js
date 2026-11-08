@@ -556,10 +556,13 @@ function bind() {
     $('#pausebadge').hidden = !G.paused;
   });
   document.querySelectorAll('.spd').forEach(b => b.addEventListener('click', () => { G.speed = +b.dataset.s; document.querySelectorAll('.spd').forEach(x => x.setAttribute('aria-pressed', x === b)); }));
+  document.querySelectorAll('[data-lv]').forEach(b => b.addEventListener('click', () => {
+    S3.setCutLevel(+b.dataset.lv); document.querySelectorAll('[data-lv]').forEach(x => x.setAttribute('aria-pressed', x === b)); S3.view('coupe');
+  }));
   document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
     const v = b.dataset.view;
-    if (v === 'coupe') { const on = !S3.isCut(); S3.setCut(on); b.setAttribute('aria-pressed', on); if (on) S3.view('coupe'); }
-    else { S3.setCut(false); $('[data-view="coupe"]').setAttribute('aria-pressed', false); S3.view(v); }
+    if (v === 'coupe') { const on = !S3.isCut(); S3.setCut(on); b.setAttribute('aria-pressed', on); $('#cut-lv').hidden = !on; if (on) S3.view('coupe'); }
+    else { S3.setCut(false); $('[data-view="coupe"]').setAttribute('aria-pressed', false); $('#cut-lv').hidden = true; S3.view(v); }
   }));
   const readForm = id => {
     const f = new FormData($(id));
@@ -690,7 +693,12 @@ function loop(now) {
   const real = Math.min(0.25, (now - last) / 1000); last = now;
   if (G.started && !G.ended) {
     if (G.paused) G.pausedTime += real;
-    else { let simDt = real * (mode === 'home' ? 1 : G.speed), n = 0; while (simDt > 1e-6 && n < 80) { GM.tick(SIM.CFG.dt); simDt -= SIM.CFG.dt; n++; } }
+    else {
+      // accumulateur : le pas de simulation (0,1 s) n'est joue que lorsque le temps ecoule l'a atteint
+      // (avant : au moins un pas par image, soit 6 a 14 fois le temps reel selon l'ecran, quel que soit le rythme)
+      G.simAcc = Math.min((G.simAcc || 0) + real * (mode === 'home' ? 1 : G.speed), 8);
+      let n = 0; while (G.simAcc >= SIM.CFG.dt && n < 80) { GM.tick(SIM.CFG.dt); G.simAcc -= SIM.CFG.dt; n++; }
+    }
   }
   S3.tickCamera(real);
   S3.update(real, now);
