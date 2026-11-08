@@ -29,6 +29,17 @@ La cage d'escalier est pour l'instant un volume unique avec un profil vertical p
 - **`scene.js`** assemble la scène : immeuble du scénario et voisins, R+3 complet avec cloisons, mobilier et brouillard de reconnaissance, engins, personnages, fumées, flammes et lumières pilotées par le moteur. La vue en coupe utilise un plan de découpe.
 - **Qualité « Standard »** : ombres, ombrage de contact (GTAO), halo lumineux (bloom), anticrénelage. **Qualité « Léger »**, pour les portables de caserne : rendu direct, textures en 256 px, moins de particules.
 
+## Plusieurs interventions
+
+Chaque intervention fournit sa logique (`window.GAME`) et sa scène 3D (`window.S3`). L'interface (`src/ui/app.js`) est commune : elle lit les mêmes fonctions (ordres, témoins, messages, ordre initial, SITAC, débriefing) et des crochets facultatifs propres à l'intervention :
+- `drawPlanBase` et `PLAN` : fond de SITAC et échelle ;
+- `hudWater` et `waterPill` : état de l'eau ;
+- `onStart` : début de partie ;
+- `debriefTruth` : situation réelle au débriefing ;
+- `META` : ticket, textes, vues, moyens de la SITAC.
+
+L'intervention est choisie par l'adresse (`?s=pizzeria`), et `index.html` charge les fichiers correspondants. Le R+3 utilise le moteur à zones (`sim.js`). La pizzeria, feu de grand volume vu de l'extérieur, utilise un modèle plus simple : 9 volumes de 100 m², propagation poussée par le vent, eau appliquée par façade, rayonnement sur les cibles (stock de gaz, HLM, évacués) et hydraulique (citernes, PI limité, aspiration). C'est la base du futur mode formateur : une intervention décrite par des données.
+
 ## Multijoueur (en préparation)
 
 Décisions prises avec le formateur référent (novembre 2026) :

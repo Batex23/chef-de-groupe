@@ -17,7 +17,8 @@ let pctx;
 let mode = 'home';
 
 // ---------------------------------------------------------------- PLAN / SITAC
-const PS = 36, PX0 = 150, PY0 = 360; // x=-3.5 -> 24 ; y=-2 -> 432 => origine
+const PLANG = GM.PLAN || { PS: 36, PX0: 150, PY0: 360 };   // R+3 : x=-3.5 -> 24 ; y=-2 -> 432
+const PS = PLANG.PS, PX0 = PLANG.PX0, PY0 = PLANG.PY0;
 const px = x => PX0 + x * PS, py = y => PY0 - y * PS;
 const ROOM_RECT = {
   SEJ: [0.2, 5.6, 0.2, 4.6], CUI: [5.8, 8.2, 0.2, 4.6], CH1: [8.4, 10.8, 0.2, 4.6], COU: [0.2, 10.8, 4.8, 5.8],
@@ -34,6 +35,11 @@ function nodeXY(loc) {
 function drawPlan(now, ctxArg) {
   const ctx = ctxArg || pctx;
   const view = (document.getElementById('st-view') || {}).value || 'both';
+  if (GM.drawPlanBase) {   // plan propre au scenario
+    GM.drawPlanBase(ctx, { px, py, PS, PW, PH, css, hatch, wrapText, victimIcon, unitIcon, now, view, clamp });
+    if (view !== 'info') { for (const e of G.sitacUser) drawSym(ctx, e); if (drag && ctx === bigCtx) drawSym(ctx, drag); }
+    return;
+  }
   const K = view === 'user' ? { facts: { layout: true }, rooms: {}, cage: {} } : G.K;
   ctx.clearRect(0, 0, PW, PH);
   ctx.fillStyle = css('--board'); ctx.fillRect(0, 0, PW, PH);
@@ -244,16 +250,19 @@ function renderHUD() {
   const g = GM.gauges();
   const items = [['victimes', 'Victimes', '--pers'], ['securite', 'Sécurité', '--risk'], ['commandement', 'Commandement', '--cmd'], ['connaissance', 'Connaissance', '--eau']];
   $('#gauges').innerHTML = items.map(([k, l, c]) => `<div class="gauge"><div class="gl"><span>${l}</span><b>${Math.round(g[k])}</b></div><div class="gt"><i style="width:${g[k]}%;background:var(${c})"></i></div></div>`).join('');
-  const tank = $('#tankhud'); tank.textContent = G.alim ? 'FPT 1 alimenté sur PI' : `Citerne FPT 1 : ${Math.round(G.tank)} L`; tank.className = 'tank ' + (G.alim ? 'ok' : G.tank < 800 ? 'low' : '');
+  const tank = $('#tankhud');
+  if (GM.hudWater) { const hw = GM.hudWater(); tank.textContent = hw.text; tank.className = 'tank ' + (hw.cls || ''); }
+  else { tank.textContent = G.alim ? 'FPT 1 alimenté sur PI' : `Citerne FPT 1 : ${Math.round(G.tank)} L`; tank.className = 'tank ' + (G.alim ? 'ok' : G.tank < 800 ? 'low' : ''); }
 }
 
 // ---------------------------------------------------------------- MENU CONTEXTUEL : ordre au chef d'agres
 let menu = null; // {pick}
 const TEAM_NAME = { BAT: 'Binôme d\'attaque', BAL: 'Binôme d\'alimentation' };
 const keepCons = { lance: true, cr: false, ari: false };
+const isLance = k => k === 'ATTAQUE' || k === 'ATTAQUE_R4' || (GM.LANCE_KEYS || []).includes(k);
 function enginOf(pick) {
   if (pick.type === 'team') { const a = G.actors.find(x => x.id === pick.id); return a ? a.engin : null; }
-  return { FPT1: 'FPT 1', FPT2: 'FPT 2' }[pick.id] || null;
+  const m = /^FPT(\d)$/.exec(pick.id); return m ? 'FPT ' + m[1] : null;
 }
 function actorsFor(pick) {
   const e = enginOf(pick);
@@ -274,7 +283,7 @@ function missionOptions(a) {
   const opts = ['<option value="">— inchangé —</option>'];
   for (const k of GM.availableMissions(a)) {
     const l = GM.MISSIONS[k].label;
-    if (k === 'ATTAQUE' || k === 'ATTAQUE_R4') opts.push(`<option value="${k}|LDV 500">${l} (LDV 500)</option>`, `<option value="${k}|LDV 250">${l} (LDV 250)</option>`);
+    if (isLance(k)) opts.push(`<option value="${k}|LDV 500">${l} (LDV 500)</option>`, `<option value="${k}|LDV 250">${l} (LDV 250)</option>`);
     else if (k === 'RECHERCHE') { opts.push(`<option value="RECHERCHE|">${l}</option>`); if (G.K.facts.victime_lieu) opts.push(`<option value="RECHERCHE|CH1">${l}, priorité chambre côté rue</option>`); }
     else opts.push(`<option value="${k}|" ${k === 'SAUVETAGE_SP' ? 'class="urg"' : ''}>${l}</option>`);
   }
@@ -305,7 +314,7 @@ function renderMenu() {
   const engin = list[0].engin, binomes = list[0].kind === 'binome';
   const html = [`<div class="mh"><b>${esc(engin)}</b><span>${binomes ? 'Ordre au chef d\'agrès · DIR 614' : 'Chef d\'agrès · DIR 614'}</span><button class="x" data-close aria-label="Fermer">×</button></div>`];
   if (binomes) {
-    html.push(`<div class="mwater">${G.alim ? '<span class="pill ok">Alimenté sur PI</span>' : `<span class="pill ${G.tank < 800 ? 'bad' : 'warn'}">Citerne ${Math.round(G.tank)} L, non alimenté</span>`}</div>`);
+    html.push(`<div class="mwater">${GM.waterPill ? GM.waterPill(engin) : G.alim ? '<span class="pill ok">Alimenté sur PI</span>' : `<span class="pill ${G.tank < 800 ? 'bad' : 'warn'}">Citerne ${Math.round(G.tank)} L, non alimenté</span>`}</div>`);
     html.push('<div class="msec"><div class="mt"><b>Missions</b></div>');
     for (const a of list) {
       const col = S3.TEAM_COLORS[a.id] || 'var(--cmd)';
@@ -345,7 +354,7 @@ function renderSuivi() {
     return `<div class="sc2 ${cls}" style="--tc:${col}" data-team="${a.id}">
       <div class="r1"><span class="tag">${a.id.replace(/\d/, '')}</span><b>${esc(a.engin)}</b><span class="loc">${esc(GM.locName(a.loc))}</span></div>
       <div class="r2">${esc(a.distress ? 'DÉTRESSE' : a.mission ? GM.MISSIONS[a.mission].label.split(/[(:]/)[0].trim() : a.status)}</div>
-      ${a.ari ? `<div class="r3"><div class="pb"><i style="width:${bar / 3}%"></i></div><span>${bar} bar</span>${out ? `<span>sortie ${GM.hhmm(out)}</span>` : ''}${since != null && engaged ? `<span>${since} min</span>` : ''}</div>` : '<div class="r3 na">ARI non capelé</div>'}
+      ${a.ari ? `<div class="r3"><div class="pb"><i style="width:${bar / 3}%"></i></div><span>${bar} bar</span>${out ? `<span>sortie ${GM.hhmm(out)}</span>` : ''}${since != null && engaged ? `<span>${since} min</span>` : ''}</div>` : '<div class="r3 na">Sans ARI</div>'}
       ${cr ? `<div class="r4 ${cr.icon} ${fresh ? 'fresh' : ''}"><i>${CR_ICON[cr.icon] || '•'}</i><span><b>${GM.hhmm(cr.t)}</b> ${esc(cr.text.replace(/^Binôme d'(attaque|alimentation) : /, ''))}</span></div>` : ''}
     </div>`;
   }).join('') || '<p class="hint">Aucun binôme sur les lieux.</p>';
@@ -401,15 +410,16 @@ function renderMsgState() {
   $('#amb-state').innerHTML = amb ? `<span class="pill ok">Transmis à ${GM.hhmm(amb.t)}</span> <button class="lnk" data-corr="amb">Voir la correction</button>` : '<span class="pill warn">À transmettre</span>';
   $('#form-amb').hidden = !!amb;
   $('#form-cr').hidden = !amb;
+  $('#pds-wrap').hidden = !(G.passation && !G.passation.done);
   $('#cr-state').innerHTML = G.crs.length ? `${G.crs.length} compte(s) rendu(s), dernier à ${GM.hhmm(G.crs[G.crs.length - 1].t)} <button class="lnk" data-corr="cr">Voir la correction</button>` : 'Aucun compte rendu transmis';
 }
 function showCorrection(c) {
   if (!c) return;
   if (c.type === 'oi') return showOICorrection(c);
-  const rows = c.type === 'ambiance' ? [['JE SUIS', 'suis'], ['JE VOIS', 'vois'], ['JE PRÉVOIS', 'prevois'], ['JE FAIS', 'fais'], ['JE DEMANDE', 'demande']] : [['JE SUIS', 'suis'], ['JE VOIS', 'vois'], ['VICTIMES', 'victimes'], ['JE FAIS', 'fais'], ['JE DEMANDE', 'demande']];
+  const rows = c.type === 'pds' ? [['SITUATION', 'vois'], ['RISQUES', 'prevois'], ['VICTIMES', 'victimes'], ['ACTIONS', 'fais'], ['MOYENS', 'demande']] : c.type === 'ambiance' ? [['JE SUIS', 'suis'], ['JE VOIS', 'vois'], ['JE PRÉVOIS', 'prevois'], ['JE FAIS', 'fais'], ['JE DEMANDE', 'demande']] : [['JE SUIS', 'suis'], ['JE VOIS', 'vois'], ['VICTIMES', 'victimes'], ['JE FAIS', 'fais'], ['JE DEMANDE', 'demande']];
   const score = c.ev.pts;
   $('#corr-body').innerHTML = `
-    <p class="lead">${c.type === 'ambiance' ? 'Message d\'ambiance' : 'Compte rendu n°' + c.n} transmis à ${GM.hhmm(c.t)}. Réussite : <b>${Math.round(score)} %</b></p>
+    <p class="lead">${c.type === 'pds' ? 'Point de situation au chef de colonne' : c.type === 'ambiance' ? 'Message d\'ambiance' : 'Compte rendu n°' + c.n} transmis à ${GM.hhmm(c.t)}. Réussite : <b>${Math.round(score)} %</b></p>
     <ul class="pts">${c.ev.out.map(o => `<li class="${o.ok ? 'ok' : 'ko'}">${esc(o.text)}</li>`).join('')}</ul>
     <div class="cmp"><div class="cmph"><span>Votre message</span><span>Message type (situation réelle à ${GM.hhmm(c.t)})</span></div>
     ${rows.map(([l, k]) => `<div class="cmpr"><b>${l}</b><div>${esc(c.f[k] || '—')}</div><div>${c.model[k] || '—'}</div></div>`).join('')}</div>
@@ -439,7 +449,7 @@ function exeOptions(a) {
   const opts = ['<option value="">— pas de mission —</option>'];
   for (const k of GM.availableMissions(a)) {
     const l = GM.MISSIONS[k].label;
-    if (k === 'ATTAQUE') { opts.push(`<option value="ATTAQUE|LDV 500">${l} (LDV 500)</option>`, `<option value="ATTAQUE|LDV 250">${l} (LDV 250)</option>`); }
+    if (isLance(k)) { opts.push(`<option value="${k}|LDV 500">${l} (LDV 500)</option>`, `<option value="${k}|LDV 250">${l} (LDV 250)</option>`); }
     else if (k === 'RECHERCHE') { opts.push(`<option value="RECHERCHE|">${l}</option>`); if (G.K.facts.victime_lieu) opts.push(`<option value="RECHERCHE|CH1">${l}, priorité chambre côté rue</option>`); }
     else if (k !== 'REPLI') opts.push(`<option value="${k}|">${l}</option>`);
   }
@@ -487,8 +497,8 @@ UI.showDebrief = () => {
   const { g, pts } = GM.debriefData();
   const W = G.W;
   const jg = [['victimes', 'Victimes'], ['securite', 'Sécurité'], ['commandement', 'Commandement'], ['connaissance', 'Connaissance']];
-  const truth = GM.ROOMS.map(r => `<li>${esc(GM.roomReportText(r, GM.snapshotRoom(r)))}</li>`).join('');
-  const vict = G.victims.map(v => `<li>${esc(v.name)} : ${GM.vState(v).s.toLowerCase()} — dose toxique ${v.fed.toFixed(2).replace('.', ',')}${v.atRue ? ', extrait(e)' : ', non extrait(e)'}</li>`).join('');
+  const truth = (GM.debriefTruth ? GM.debriefTruth() : GM.ROOMS.map(r => GM.roomReportText(r, GM.snapshotRoom(r)))).map(t => `<li>${esc(t)}</li>`).join('');
+  const vict = GM.debriefTruth ? '' : G.victims.map(v => `<li>${esc(v.name)} : ${GM.vState(v).s.toLowerCase()} — dose toxique ${v.fed.toFixed(2).replace('.', ',')}${v.atRue ? ', extrait(e)' : ', non extrait(e)'}</li>`).join('');
   const fstate = (GM.FIRE_STATES.find(f => f[0] === G.fire.cur) || [0, ''])[1];
   $('#debrief-body').innerHTML = `
     <p class="lead">${esc(G.endReason)} — ${GM.clock(W.t).slice(0, 5)}, soit ${GM.fmtDur(W.t - GM.T_ARRIVEE)} après votre arrivée. Situation du feu : <b>${fstate.toLowerCase()}</b>.</p>
@@ -534,7 +544,7 @@ function bind() {
     if (oc) {
       const cons = { lance: $('#oc-lance').checked, cr: $('#oc-cr').checked, ari: $('#oc-ari').checked };
       Object.assign(keepCons, cons);
-      const list = actorsFor(menu.pick).map(a => { const v = (document.getElementById('om-' + a.id) || {}).value || ''; const [m, o] = v.split('|'); return { id: a.id, mission: m || null, opts: (m === 'ATTAQUE' || m === 'ATTAQUE_R4') ? { lance: o } : m === 'RECHERCHE' && o ? { priority: o } : {} }; });
+      const list = actorsFor(menu.pick).map(a => { const v = (document.getElementById('om-' + a.id) || {}).value || ''; const [m, o] = v.split('|'); return { id: a.id, mission: m || null, opts: isLance(m) ? { lance: o } : m === 'RECHERCHE' && o ? { priority: o } : {} }; });
       if (!list.some(x => x.mission)) { UI.toast('Aucune mission choisie.', 'alerte'); return; }
       GM.orderCA(oc.dataset.orderca, list, cons); closeMenu(); return;
     }
@@ -556,10 +566,14 @@ function bind() {
     $('#pausebadge').hidden = !G.paused;
   });
   document.querySelectorAll('.spd').forEach(b => b.addEventListener('click', () => { G.speed = +b.dataset.s; document.querySelectorAll('.spd').forEach(x => x.setAttribute('aria-pressed', x === b)); }));
+  document.querySelectorAll('[data-lv]').forEach(b => b.addEventListener('click', () => {
+    if (!S3.setCutLevel) return;
+    S3.setCutLevel(+b.dataset.lv); document.querySelectorAll('[data-lv]').forEach(x => x.setAttribute('aria-pressed', x === b)); S3.view('coupe');
+  }));
   document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
     const v = b.dataset.view;
-    if (v === 'coupe') { const on = !S3.isCut(); S3.setCut(on); b.setAttribute('aria-pressed', on); if (on) S3.view('coupe'); }
-    else { S3.setCut(false); $('[data-view="coupe"]').setAttribute('aria-pressed', false); S3.view(v); }
+    if (v === 'coupe') { const on = !S3.isCut(); S3.setCut(on); b.setAttribute('aria-pressed', on); $('#cut-lv').hidden = !on || !S3.setCutLevel; if (on) S3.view('coupe'); }
+    else { S3.setCut(false); $('[data-view="coupe"]').setAttribute('aria-pressed', false); $('#cut-lv').hidden = true; S3.view(v); }
   }));
   const readForm = id => {
     const f = new FormData($(id));
@@ -571,6 +585,7 @@ function bind() {
     const c = e.target.closest('[data-corr]'); if (!c) return;
     showCorrection(c.dataset.corr === 'amb' ? Object.assign({ type: 'ambiance' }, G.ambiance) : Object.assign({ type: 'cr', n: G.crs.length }, G.crs[G.crs.length - 1]));
   });
+  $('#form-pds').addEventListener('submit', e => { e.preventDefault(); if (G.ended || !GM.sendPassation) return; const c = GM.sendPassation(readForm('#form-pds')); renderMsgState(); if (c) showCorrection(c); });
   $('#form-urg').addEventListener('submit', e => { e.preventDefault(); if (G.ended) return; const f = new FormData(e.target); GM.sendUrgent((f.get('txt') || '').trim(), f.get('canal')); e.target.reset(); UI.toast('Message urgent transmis.', 'urgent'); });
   $('#radio').addEventListener('click', e => { const b = e.target.closest('[data-rf]'); if (!b) return; radioFilter = b.dataset.rf; renderRadio(); });
   $('#suivi-list').addEventListener('pointerdown', e => { const c = e.target.closest('[data-team]'); if (!c || mode !== 'game') return; const r = c.getBoundingClientRect(); openMenu({ type: 'team', id: c.dataset.team }, r.right, r.top + 20); });
@@ -586,7 +601,7 @@ function bind() {
   $('#form-oi').addEventListener('submit', e => {
     e.preventDefault(); if (G.ended || G.oi) return;
     const f = new FormData(e.target);
-    const exe = G.actors.filter(a => a.loc !== 'ABSENT').map(a => { const v = (document.getElementById('exe-' + a.id) || {}).value || ''; const [m, o] = v.split('|'); return { id: a.id, mission: m || null, opts: m === 'ATTAQUE' ? { lance: o } : m === 'RECHERCHE' && o ? { priority: o } : {} }; });
+    const exe = G.actors.filter(a => a.loc !== 'ABSENT').map(a => { const v = (document.getElementById('exe-' + a.id) || {}).value || ''; const [m, o] = v.split('|'); return { id: a.id, mission: m || null, opts: isLance(m) ? { lance: o } : m === 'RECHERCHE' && o ? { priority: o } : {} }; });
     const c = GM.giveOI({ S: f.get('S') || '', A: f.get('A') || '', C: f.get('C') || '', L: f.get('L') || '', obj: f.getAll('obj'), im: f.getAll('im'), exe });
     $('#oiwin').hidden = true; if (c) showCorrection(c);
   });
@@ -608,7 +623,7 @@ function bind() {
   bp.addEventListener('pointerdown', ev => {
     if (!tool || mode !== 'game') return;
     const p = planFromEvent(ev);
-    if (tool === 'gomme') { GM.sitacRemoveNear(p.x, p.y); drawPlan(performance.now(), bigCtx); return; }
+    if (tool === 'gomme') { GM.sitacRemoveNear(p.x, p.y, 34 / PS); drawPlan(performance.now(), bigCtx); return; }
     if (tool === 'texte') {
       const r = bp.getBoundingClientRect(), w = bp.parentElement.getBoundingClientRect();
       ev.preventDefault();
@@ -620,14 +635,14 @@ function bind() {
   });
   bp.addEventListener('pointermove', ev => {
     if (!drag) return; const p = planFromEvent(ev);
-    if (drag.pts) { const l = drag.pts[drag.pts.length - 1]; if (Math.hypot(p.x - l[0], p.y - l[1]) > 0.12) drag.pts.push([+p.x.toFixed(2), +p.y.toFixed(2)]); }
+    if (drag.pts) { const l = drag.pts[drag.pts.length - 1]; if (Math.hypot(p.x - l[0], p.y - l[1]) > 4 / PS) drag.pts.push([+p.x.toFixed(2), +p.y.toFixed(2)]); }
     else { drag.x2 = p.x; drag.y2 = p.y; }
     drawPlan(performance.now(), bigCtx);
   });
   bp.addEventListener('pointerup', () => {
     if (!drag) return;
     if (drag.pts) { if (drag.pts.length > 2) { const n = drag.pts.length; drag.x = drag.pts.reduce((a, q) => a + q[0], 0) / n; drag.y = drag.pts.reduce((a, q) => a + q[1], 0) / n; GM.sitacAdd(drag); } }
-    else if (Math.hypot(drag.x2 - drag.x, drag.y2 - drag.y) > 0.4) GM.sitacAdd(drag);
+    else if (Math.hypot(drag.x2 - drag.x, drag.y2 - drag.y) > 14 / PS) GM.sitacAdd(drag);
     drag = null; drawPlan(performance.now(), bigCtx);
   });
   $('#sitac-close').addEventListener('click', () => { $('#sitacbig').hidden = true; });
@@ -636,6 +651,7 @@ function bind() {
   // accueil
   $('#home').addEventListener('click', e => {
     const b = e.target.closest('[data-play]'); if (!b) return;
+    if (b.dataset.play !== (window.SCEN || 'r3')) { location.href = '?s=' + b.dataset.play + '&play=1'; return; }
     $('#home').hidden = true; $('#intro').hidden = false;
   });
   $('#quality').addEventListener('change', e => { try { localStorage.setItem('cdg-quality', e.target.value); } catch (er) { } location.reload(); });
@@ -666,9 +682,22 @@ function openBig() {
 // ---------------------------------------------------------------- CYCLE DE VIE
 function resetUI() {
   closeMenu(); dialogW = null; $('#dialog').hidden = true; $('#corr').hidden = true;
-  $('#form-amb').reset(); $('#form-cr').reset(); $('#form-urg').reset(); $('#toast').innerHTML = ''; $('#victs').innerHTML = ''; $('#alerte').hidden = true; $('#suivi-list').innerHTML = ''; renderSuivi.last = ''; renderAlerte.last = ''; radioFilter = '';
+  $('#form-amb').reset(); $('#form-cr').reset(); $('#form-urg').reset(); $('#form-pds').reset(); $('#toast').innerHTML = ''; $('#victs').innerHTML = ''; $('#alerte').hidden = true; $('#suivi-list').innerHTML = ''; renderSuivi.last = ''; renderAlerte.last = ''; radioFilter = '';
   $('#btn-pause').textContent = 'Pause'; $('#pausebadge').hidden = true;
   renderMsgState();
+}
+// textes propres au scenario (bandeau, ticket, SITAC, ordre initial)
+function applyMeta() {
+  const M = GM.META; if (!M) return;
+  if (M.brand) $('.brand small').textContent = M.brand;
+  if (M.lead) $('#intro .lead').textContent = M.lead;
+  if (M.ticket) $('#intro .ticket').innerHTML = M.ticket;
+  if (M.howto) $('#intro .howto').innerHTML = M.howto;
+  if (M.sitacTitle) $('#sitacbig h2').textContent = M.sitacTitle;
+  if (M.oiC) $('#oi-c').value = M.oiC;
+  if (M.moyens) $('#st-moyen').innerHTML = M.moyens.map(m => `<option>${esc(m)}</option>`).join('');
+  if (M.title) document.title = M.title;
+  if (M.views) for (const [k, v] of Object.entries(M.views)) { const b = document.querySelector(`[data-view="${k}"]`); if (b) b.textContent = v; }
 }
 function goHome() {
   mode = 'home'; GM.newGame(); G.started = true; G.speed = 1; resetUI();
@@ -681,6 +710,7 @@ function startGame() {
   $('#oi-obj').innerHTML = ''; $('#form-oi').reset();
   mode = 'game'; document.body.classList.remove('home');
   $('#intro').hidden = true; S3.autoRotate(false); S3.view('rue');
+  if (GM.onStart) { GM.onStart(); return; }
   UI.toast('Vous arrivez sur les lieux. Le CA du FPT 1 vous attend au pied de l\'immeuble.', 'cr');
   setTimeout(() => GM.radio('CA FPT 1', 'CDG', 'Point de situation : feu d\'appartement au 3e, fumées noires par les fenêtres côté rue. La cage est enfumée. J\'ai ouvert la porte d\'immeuble. J\'attends vos ordres.', 'alerte', 'DIR 614'), 1500);
 }
@@ -690,7 +720,13 @@ function loop(now) {
   const real = Math.min(0.25, (now - last) / 1000); last = now;
   if (G.started && !G.ended) {
     if (G.paused) G.pausedTime += real;
-    else { let simDt = real * (mode === 'home' ? 1 : G.speed), n = 0; while (simDt > 1e-6 && n < 80) { GM.tick(SIM.CFG.dt); simDt -= SIM.CFG.dt; n++; } }
+    else {
+      // accumulateur : le pas de simulation n'est joue que lorsque le temps ecoule l'a atteint
+      // (avant : au moins un pas par image, soit 6 a 14 fois le temps reel selon l'ecran, quel que soit le rythme)
+      const dt = GM.DT || SIM.CFG.dt;
+      G.simAcc = Math.min((G.simAcc || 0) + real * (mode === 'home' ? 1 : G.speed), 8);
+      let n = 0; while (G.simAcc >= dt && n < 80) { GM.tick(dt); G.simAcc -= dt; n++; }
+    }
   }
   S3.tickCamera(real);
   S3.update(real, now);
@@ -713,12 +749,14 @@ function loop(now) {
 window.addEventListener('DOMContentLoaded', () => {
   let q = 'standard'; try { q = localStorage.getItem('cdg-quality') || 'standard'; } catch (e) { }
   $('#quality').value = q;
+  applyMeta();
   const pc = $('#plan'); const dpr = Math.min(devicePixelRatio || 1, 2); pc.width = PW * dpr; pc.height = PH * dpr; pctx = pc.getContext('2d'); pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   setTimeout(() => {
     try { S3.init($('#view'), q); }
     catch (err) { $('#loading').hidden = true; $('#nogl').hidden = false; console.error(err); return; }
     $('#loading').hidden = true;
     bind(); goHome();
+    if (/[?&]play=1/.test(location.search)) { $('#home').hidden = true; $('#intro').hidden = false; }
     requestAnimationFrame(t => { last = t; loop(t); });
   }, 50);
 });

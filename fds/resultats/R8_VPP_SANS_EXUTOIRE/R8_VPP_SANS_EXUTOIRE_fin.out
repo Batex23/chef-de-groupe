@@ -1,0 +1,86 @@
+11)
+       Mesh    3
+       Max CFL number:  0.56E+00 at (   9,  10,   5)
+       Max divergence:  0.12E-02 at (  15,   3,  50)
+       Min divergence: -0.13E-02 at (  11,   3,  65)
+       Max VN number:   0.69E+00 at (   9,   7,   1)
+       Mesh    4
+       Max CFL number:  0.81E+00 at (   9,  10,   5)
+       Max divergence:  0.36E-03 at (   7,   1,  10)
+       Min divergence: -0.14E-03 at (   9,  10,   2)
+       Max VN number:   0.36E+00 at (   6,  11,   4)
+ 
+       Time Step   97100   November  6, 2026  22:16:53
+       Step Size:    0.155E-01 s, Total Time:    1799.07 s
+       Pressure Iterations:      2
+       Maximum Velocity Error:  0.55E-01 on Mesh   3 at (  10  19   5)
+       Maximum Pressure Error:  0.62E+00 on Mesh   1 at (  26  13   1)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.25E+00 at (   1,  29,   1)
+       Max divergence:  0.49E-01 at (   6,   4,  13)
+       Min divergence: -0.40E-01 at (  22,  16,  13)
+       Max VN number:   0.23E+00 at (   6,   1,  11)
+       Mesh    2
+       Max CFL number:  0.26E+00 at (  18,   9,  11)
+       Max divergence:  0.25E-01 at (   7,   8,  10)
+       Min divergence: -0.33E-01 at (   6,   8,  11)
+       Max VN number:   0.11E+00 at (   8,  10,  13)
+       Mesh    3
+       Max CFL number:  0.56E+00 at (   8,  13,   4)
+       Max divergence:  0.18E-02 at (  15,   1,  50)
+       Min divergence: -0.13E-02 at (   1,  15,  62)
+       Max VN number:   0.63E+00 at (  11,   8,   1)
+       Mesh    4
+       Max CFL number:  0.81E+00 at (   7,  10,   4)
+       Max divergence:  0.26E-03 at (   5,   2,  13)
+       Min divergence: -0.26E-03 at (   6,   1,  14)
+       Max VN number:   0.43E+00 at (   6,  11,   4)
+ 
+       Time Step   97161   November  6, 2026  22:17:08
+       Step Size:    0.142E-02 s, Total Time:    1800.00 s
+       Pressure Iterations:      1
+       Maximum Velocity Error:  0.30E-01 on Mesh   4 at (   7   0   5)
+       Maximum Pressure Error:  0.81E+00 on Mesh   1 at (  30   2  13)
+       ---------------------------------------------------------------
+       Mesh    1
+       Max CFL number:  0.25E-01 at (  26,  21,   4)
+       Max divergence:  0.41E-01 at (  26,  23,  10)
+       Min divergence: -0.47E-01 at (  19,  24,   6)
+       Max VN number:   0.16E-01 at (  29,  29,   4)
+       Mesh    2
+       Max CFL number:  0.21E-01 at (  16,   7,  13)
+       Max divergence:  0.40E-01 at (   6,   9,  12)
+       Min divergence: -0.46E-01 at (   6,  10,  11)
+       Max VN number:   0.17E-01 at (   5,  10,  11)
+       Mesh    3
+       Max CFL number:  0.56E-01 at (   7,   4,   4)
+       Max divergence:  0.18E-02 at (  15,   1,  50)
+       Min divergence: -0.12E-02 at (  12,   1,  50)
+       Max VN number:   0.37E-01 at (   8,   8,   1)
+       Mesh    4
+       Max CFL number:  0.75E-01 at (   7,  10,   4)
+       Max divergence:  0.24E-03 at (  11,   1,  10)
+       Min divergence: -0.21E-03 at (   6,   1,  14)
+       Max VN number:   0.42E-01 at (   6,  11,   4)
+ 
+
+
+ DEVICE Activation Times
+
+   1  BRIS_VITRE_SEJ1                                                120.9 s
+   2  BRIS_VITRE_SEJ2                                                200.8 s
+   3  BRIS_VITRE_CUI                                              No Activation
+   4  BRIS_VITRE_CH1                                              No Activation
+ 220  OUV_PORTE_PALIERE->OUT                                          90.0 s
+ 221  OUV_PORTE_CH1->OUT                                          No Activation
+ 222  OUV_PORTE_CH2->OUT                                               0.1 s
+ 223  OUV_PORTE_CH3->OUT                                          No Activation
+ 224  OUV_EXUTOIRE->OUT                                           No Activation
+ 225  OUV_PORTE_IMMEUBLE->OUT                                        540.0 s
+
+
+ Time Stepping Wall Clock Time (s):    24838.987
+ Total Elapsed Wall Clock Time (s):    24843.234
+
+STOP: FDS completed successfully (CHID: R8_VPP_SANS_EXUTOIRE)

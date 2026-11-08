@@ -12,11 +12,12 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { pbr, plain, setTextureResolution } from './materials.js';
+import { createFdsSmoke } from './fdsvol.js';
 import { Batch, wallGeometry, wallMatrix, windowKit, balcony, genericBuilding, CLIP } from './building.js';
 const GAME = window.GAME;
 const { layerRel, conditionsAt, roomOnFire, clamp } = SIM;
 const S3 = window.S3 = {};
-let renderer, scene, camera, controls, quality = 'standard';
+let renderer, scene, camera, controls, quality = 'standard', fds = null;
 const pickables = [];
 const R3 = 7.8, LV = 2.6;
 const TEAM_COLORS = { BAT1: '#ff8a3d', BAL1: '#35c4e0', BAT2: '#f5c542', BAL2: '#4fd1a5' };
@@ -147,6 +148,26 @@ S3.init = function (canvas, q) {
   } catch (e) { console.warn('environnement indisponible', e); }
   let fxi = ''; try { fxi = localStorage.getItem('cdg-fx') || ''; } catch (e) { }
   if (quality === 'standard' && !fxi.includes('nocomposer')) buildComposer();
+  // fumee des calculs FDS (si les donnees sont publiees avec le jeu)
+  if (!fxi.includes('nofds') && typeof DecompressionStream !== 'undefined') {
+    fds = S3.fds = createFdsSmoke(T, scene, { R3, light: quality !== 'standard' });
+    // les conditions du jeu (victimes, binomes, observations) sont lues dans le calcul FDS affiche
+    SIM.FDS_HOOK.fn = (zid, hrel, t) => {
+      if (!fds.info().on) return null;
+      let p;
+      if (zid === 'CAGE') p = [-1.5, hrel, -6.8];
+      else if (ROOM_RECT[zid]) { const [x1, x2, y1, y2] = ROOM_RECT[zid]; p = [(x1 + x2) / 2, R3 + Math.min(2.4, Math.max(0.2, hrel)), -(y1 + y2) / 2]; }
+      else return null;
+      const ev = (window.G && G.fdsEv) || {}; if (window.G) ev.attack = G.attackT, ev.vpp = G.vppT;
+      const q = fds.sampleAt(ev, t, ...p); if (!q) return null;
+      return { T: q.T + 273.15, O2: q.O2, CO: q.CO, vis: Math.min(30, q.VIS), smoke: q.VIS < 10, fds: true };
+    };
+    fetch('data/fds/index.json').then(r => r.ok ? r.json() : null).then(ix => {
+      if (!ix || !ix.cas || !ix.cas.length) return;
+      const first = 'R1_PORTE_PALIERE_OUVERTE', list = ix.cas.includes(first) ? [first, ...ix.cas.filter(c => c !== first)] : ix.cas;
+      fds.start(list);
+    }).catch(() => {});
+  }
   S3.resize();
   window.addEventListener('resize', S3.resize);
 };
@@ -277,7 +298,8 @@ const SHUT = { 0: [0, 0.6, 0, 1, 0.3, 0, 0], 1: [0.4, 0, 0, 0.8, 0, 0.5, 1], 2: 
 const upper = [];      // objets masques en vue en coupe
 const winR3 = {};      // vitrages du R+3 pilotes par la simulation
 const cageWins = {};
-let cageDoor, exuLid, neighbourFig, r3WinGroup, upperGroup;
+let cageDoor, exuLid, neighbourFig, r3WinGroup, upperGroup, r3Int;
+const levelGroups = [], winGroups = [];   // un groupe par niveau (coupe a n'importe quel etage)
 const clipCache = new Map();
 function clipped(m) {
   if (clipCache.has(m)) return clipCache.get(m);
@@ -291,14 +313,20 @@ function buildBuilding() {
   const T0 = 0.2;
   upperGroup = new T.Group(); scene.add(upperGroup); upper.push(upperGroup);
   r3WinGroup = new T.Group(); scene.add(r3WinGroup);
-  const bLow = new Batch(), bUp = new Batch(), bR3 = new Batch(), bR3w = new Batch();
+  const bUp = new Batch(), bR3w = new Batch(), bL = [], bW = [];
+  for (let L = 0; L < 5; L++) {
+    bL.push(new Batch()); bW.push(new Batch());
+    const g = new T.Group(); scene.add(g); levelGroups.push(g);
+    const gw = L === 3 ? r3WinGroup : new T.Group(); if (L !== 3) scene.add(gw); winGroups.push(gw);
+  }
+  const inner = plain('#e2dccf', { roughness: 0.95 });
   const facade = pbr('plaster'), base = pbr('stone'), cageMat = pbr('plaster', { color: '#cfc6b4' });
   const concrete = pbr('concrete');
   for (let L = 0; L < 5; L++) {
     const y0 = L * LV, isR3 = L === 3;
-    const B = isR3 ? bR3 : L === 4 ? bUp : bLow;
-    const BW = isR3 ? bR3w : B;
-    const ext = L === 0 ? base : facade, M = m => isR3 ? clipped(m) : m;
+    const B = bL[L];
+    const BW = isR3 ? bR3w : bW[L];
+    const ext = L === 0 ? base : facade, M = m => clipped(m);
     // facade rue
     const fo = FRONT_WIN.map(w => [w[1], w[2], w[3], w[4]]);
     const Mf = wallMatrix(0, y0, 0, 0);
@@ -337,24 +365,25 @@ function buildBuilding() {
       B.add(new T.BoxGeometry(11.1, 0.14, 0.06), M(concrete), new T.Matrix4().makeTranslation(5.5, y0, -8.63));
     }
     const slab = new T.BoxGeometry(10.6, 0.2, 8.2);
-    (L === 4 ? bUp : isR3 ? bR3 : bLow).add(slab, isR3 ? clipped(concrete) : concrete, new T.Matrix4().makeTranslation(5.5, y0 + LV - 0.1, -4.3));
-    if (L !== 3 && L !== 4) bLow.add(new T.BoxGeometry(10.5, LV - 0.3, 8.1), plain('#07090c'), new T.Matrix4().makeTranslation(5.5, y0 + LV / 2 - 0.05, -4.3).multiply(new T.Matrix4().makeScale(0.8, 1, 0.75)));
+    B.add(slab, clipped(concrete), new T.Matrix4().makeTranslation(5.5, y0 + LV - 0.1, -4.3));
+    // logements des autres niveaux : meme plan que le R+3 (cloisons et sols), visibles en coupe
+    if (!isR3) genericFlat(B, y0, inner);
     // balcons filants devant le sejour
-    if (L === 1 || L === 2 || L === 4) balcony(L === 4 ? bUp : bLow, 0.7, 5.1, y0, 0, 1.1);
+    if (L === 1 || L === 2 || L === 4) balcony(bW[L], 0.7, 5.1, y0, 0, 1.1);
     // cage d'escalier (travee gauche, facade en retrait)
-    const BC = isR3 ? bR3 : L === 4 ? bUp : bLow;
+    const BC = bL[L];
     const co = L === 0 ? [[1.0, 2.2, 0, 2.3]] : [[1.1, 1.9, 0.9, 2.0]];
     const Mc = wallMatrix(-3, y0, -0.15, 0);
-    BC.add(wallGeometry(3, LV, T0, co, -3, y0), isR3 ? clipped(cageMat) : cageMat, Mc);
-    BC.add(wallGeometry(8.45, LV, T0, [], 0, y0), isR3 ? clipped(cageMat) : cageMat, wallMatrix(-3, y0, -8.6, -Math.PI / 2));
-    BC.add(wallGeometry(3, LV, T0, [[1.1, 1.9, 0.9, 2.0]], 0, y0), isR3 ? clipped(cageMat) : cageMat, wallMatrix(0, y0, -8.6, Math.PI));
+    BC.add(wallGeometry(3, LV, T0, co, -3, y0), clipped(cageMat), Mc);
+    BC.add(wallGeometry(8.45, LV, T0, [], 0, y0), clipped(cageMat), wallMatrix(-3, y0, -8.6, -Math.PI / 2));
+    BC.add(wallGeometry(3, LV, T0, [[1.1, 1.9, 0.9, 2.0]], 0, y0), clipped(cageMat), wallMatrix(0, y0, -8.6, Math.PI));
     if (L > 0) {
       const lv = GAME.LEVELS[L];
-      const cm = std('#2a2116', { emissive: '#e8dcc0', emissiveIntensity: 0.9, roughness: 0.3 });
-      const r = windowKit(isR3 ? bR3w : BC, Mc, co[0], T0, { glass: cm, card: false });
-      const gm = new T.Mesh(r.glassGeo, cm); gm.applyMatrix4(r.matrix); (L === 4 ? upperGroup : isR3 ? r3WinGroup : scene).add(gm);
+      const cm = std('#2a2116', { emissive: '#e8dcc0', emissiveIntensity: 0.9, roughness: 0.3 }); cm.clippingPlanes = [CLIP];
+      const r = windowKit(bW[L], Mc, co[0], T0, { glass: cm, card: false });
+      const gm = new T.Mesh(r.glassGeo, cm); gm.applyMatrix4(r.matrix); levelGroups[L].add(gm);
       cageWins[lv] = cm;
-      pickBox(-1.9, -1.1, y0 + 0.9, y0 + 2.0, -0.05, { type: 'observe', what: 'CAGE_' + lv }, L === 4 ? upperGroup : scene);
+      pickBox(-1.9, -1.1, y0 + 0.9, y0 + 2.0, -0.05, { type: 'observe', what: 'CAGE_' + lv }, levelGroups[L]);
     }
   }
   // hall d'entree : porte vitree aluminium, hall eclaire, auvent, plaques
@@ -367,7 +396,7 @@ function buildBuilding() {
     const gl = new T.Mesh(new T.PlaneGeometry(0.52, 2.0), std('#1b2630', { roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.45 })); gl.position.set(dir * 0.3, 1.08, 0); leaf.add(gl);
     leaf.userData.dir = dir; cageDoor.userData['leaf' + s] = leaf;
   }
-  const hall = new T.Mesh(new T.PlaneGeometry(2.6, 2.4), new T.MeshBasicMaterial({ map: roomCardLit(), toneMapped: true })); hall.position.set(-1.5, 1.3, -1.6); scene.add(hall);
+  const hall = new T.Mesh(new T.PlaneGeometry(2.6, 2.4), new T.MeshBasicMaterial({ map: roomCardLit(), toneMapped: true, clippingPlanes: [CLIP] })); hall.position.set(-1.5, 1.3, -1.6); scene.add(hall);
   box(2.2, 0.14, 1.3, pbr('concrete'), -1.6, 2.55, 0.5, null, true);
   glow('#ffd9a0', 2.4, null, -1.6, 2.3, 0.4, 0.25);
   markPick(cageDoor, { type: 'observe', what: 'IMMEUBLE' });
@@ -391,16 +420,31 @@ function buildBuilding() {
   bUp.add(new T.BoxGeometry(1.2, 0.03, 0.03), metal, new T.Matrix4().makeTranslation(6.5, top + 2.5, -4));
   bUp.add(new T.BoxGeometry(0.9, 0.03, 0.03), metal, new T.Matrix4().makeTranslation(6.5, top + 2.1, -4));
   // descente d'eaux pluviales
-  bLow.add(new T.CylinderGeometry(0.06, 0.06, top, 10), metal, new T.Matrix4().makeTranslation(10.95, top / 2, 0.1));
+  bUp.add(new T.CylinderGeometry(0.06, 0.06, top, 10), metal, new T.Matrix4().makeTranslation(10.95, top / 2, 0.1));
   const exu = new T.Group(); exu.position.set(-1.5, top + 0.2, -6.9); upperGroup.add(exu);
   box(1.2, 0.3, 1.2, pbr('concrete'), 0, 0, 0, exu, true);
   exuLid = new T.Group(); exuLid.position.set(0, 0.32, -0.6); exu.add(exuLid);
   box(1.2, 0.06, 1.2, std('#9fb7c9', { roughness: 0.2, metalness: 0.3, transparent: true, opacity: 0.8 }), 0, 0, 0.6, exuLid, true);
   markPick(exu, { type: 'observe', what: 'TOIT' });
   // voisin du R+4 : zone cliquable
-  pickBox(1.0, 2.4, 4 * LV + 0.8, 4 * LV + 2.2, 0.08, { type: 'observe', what: 'R4' }, upperGroup);
+  pickBox(1.0, 2.4, 4 * LV + 0.8, 4 * LV + 2.2, 0.08, { type: 'observe', what: 'R4' }, winGroups[4]);
   const sh = quality === 'standard';
-  bLow.flush(scene, sh); bUp.flush(upperGroup, sh); bR3.flush(scene, sh); bR3w.flush(r3WinGroup, sh);
+  bUp.flush(upperGroup, sh); bR3w.flush(r3WinGroup, sh);
+  for (let L = 0; L < 5; L++) { bL[L].flush(levelGroups[L], sh); if (L !== 3) bW[L].flush(winGroups[L], sh); }
+}
+const PARTITIONS = [
+  [10.6, [[3.4, 5.0, 0, 2.0], [6.2, 7.0, 0, 2.0], [8.8, 9.6, 0, 2.0]], 0.2, -4.6, 0], [10.6, [[2.4, 3.2, 0, 2.0], [4.2, 5.0, 0, 2.0], [6.8, 7.6, 0, 2.0]], 0.2, -5.8, 0],
+  [4.4, [], 5.6, -4.6, -Math.PI / 2], [4.4, [], 8.2, -4.6, -Math.PI / 2], [2.4, [], 3.8, -8.4, -Math.PI / 2], [2.4, [], 6.0, -8.4, -Math.PI / 2]];
+function genericFlat(B, y0, inner) {
+  for (const [L, ops, x, z, r] of PARTITIONS) B.add(wallGeometry(L, LV, 0.2, ops, 0, 0), clipped(inner), wallMatrix(x, y0, z, r));
+  const par = clipped(plain('#8a6a4c', { roughness: 0.8 })), til = clipped(plain('#b9b4aa', { roughness: 0.6 })), fur = clipped(plain('#6e6458', { roughness: 0.9 }));
+  for (const r in ROOM_RECT) {
+    const [x1, x2, y1, y2] = ROOM_RECT[r];
+    B.add(new T.BoxGeometry(x2 - x1, 0.02, y2 - y1), r === 'SDB' || r === 'CUI' ? til : par, new T.Matrix4().makeTranslation((x1 + x2) / 2, y0 + 0.01, -(y1 + y2) / 2));
+  }
+  // quelques meubles pour lire les pieces
+  for (const [x1, x2, y1, y2, h] of [[0.6, 2.6, 0.6, 1.5, 0.8], [2.3, 3.7, 2.5, 3.5, 0.75], [5.9, 8.1, 0.25, 0.85, 0.9], [8.6, 10.6, 1.0, 3.0, 0.55], [0.4, 2.2, 6.6, 8.2, 0.55], [8.8, 10.6, 6.4, 8.2, 0.55]])
+    B.add(new T.BoxGeometry(x2 - x1, h, y2 - y1), fur, new T.Matrix4().makeTranslation((x1 + x2) / 2, y0 + h / 2, -(y1 + y2) / 2));
 }
 function roomCardLit() {
   return canvasTex(256, 256, (c, w, h) => { const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, '#f6e2b8'); g.addColorStop(1, '#a7865a'); c.fillStyle = g; c.fillRect(0, 0, w, h); c.fillStyle = '#6b5a45'; c.fillRect(150, 90, 70, 110); c.fillStyle = '#8c7a62'; for (let i = 0; i < 6; i++) c.fillRect(20 + i * 20, 60, 16, 30); });
@@ -416,9 +460,10 @@ function planBox(b, mat, rounded) { // b = [x1,x2,y1,y2,z1,z2] (plan, hauteurs r
   const m = new T.Mesh(g, clipped(mat));
   m.position.set((x1 + x2) / 2, R3 + (z1 + z2) / 2, -(y1 + y2) / 2);
   if (quality === 'standard') { m.castShadow = true; m.receiveShadow = true; }
-  scene.add(m); return m;
+  r3Int.add(m); return m;
 }
 function buildR3Interior() {
+  r3Int = new T.Group(); scene.add(r3Int);
   const H = 2.6, inner = plain('#e2dccf', { roughness: 0.95 }), b = new Batch();
   const W = (L, ops, M) => b.add(wallGeometry(L, H, 0.2, ops, 0, 0), clipped(inner), M);
   W(10.6, [[3.4, 5.0, 0, 2.0], [6.2, 7.0, 0, 2.0], [8.8, 9.6, 0, 2.0]], wallMatrix(0.2, R3, -4.6, 0));
@@ -427,7 +472,7 @@ function buildR3Interior() {
   W(4.4, [], wallMatrix(8.2, R3, -4.6, -Math.PI / 2));
   W(2.4, [], wallMatrix(3.8, R3, -8.4, -Math.PI / 2));
   W(2.4, [], wallMatrix(6.0, R3, -8.4, -Math.PI / 2));
-  b.flush(scene, quality === 'standard');
+  b.flush(r3Int, quality === 'standard');
   // portes pilotees par la simulation
   const wood = std('#7b5a3e', { roughness: 0.6 });
   S3.doors = {
@@ -439,7 +484,7 @@ function buildR3Interior() {
   for (const r in ROOM_RECT) {
     const [x1, x2, y1, y2] = ROOM_RECT[r];
     const f = new T.Mesh(planeUV(x2 - x1, y2 - y1), pbr(r === 'SDB' || r === 'CUI' ? 'tiles' : 'parquet'));
-    f.rotation.x = -Math.PI / 2; f.position.set((x1 + x2) / 2, R3 + 0.01, -(y1 + y2) / 2); f.receiveShadow = true; scene.add(f);
+    f.rotation.x = -Math.PI / 2; f.position.set((x1 + x2) / 2, R3 + 0.01, -(y1 + y2) / 2); f.receiveShadow = true; r3Int.add(f);
   }
   // mobilier
   const F = (x1, x2, y1, y2, z1, z2, col, rough) => planBox([x1, x2, y1, y2, z1, z2], std(col, { roughness: rough || 0.8 }), true);
@@ -458,12 +503,12 @@ function buildR3Interior() {
   for (const r in ROOM_RECT) {
     const [x1, x2, y1, y2] = ROOM_RECT[r];
     const fm = new T.Mesh(new T.BoxGeometry(x2 - x1 + 0.02, 1.2, y2 - y1 + 0.02), new T.MeshBasicMaterial({ color: '#0a0f16', transparent: true, opacity: 0.93, depthWrite: false }));
-    fm.position.set((x1 + x2) / 2, R3 + 0.6, -(y1 + y2) / 2); fm.visible = false; fm.userData.noAO = true; scene.add(fm); fog[r] = fm;
+    fm.position.set((x1 + x2) / 2, R3 + 0.6, -(y1 + y2) / 2); fm.visible = false; fm.userData.noAO = true; r3Int.add(fm); fog[r] = fm;
     const sv = new T.Mesh(new T.BoxGeometry(x2 - x1 - 0.02, 1, y2 - y1 - 0.02), new T.MeshBasicMaterial({ color: '#2b2b2e', transparent: true, opacity: 0.5, depthWrite: false }));
-    sv.visible = false; sv.userData.noAO = true; scene.add(sv); smokeVol[r] = sv;
-    const q = label('?', '#8d9db0', { scale: 0.008, always: false }); q.position.set((x1 + x2) / 2, R3 + 1.5, -(y1 + y2) / 2); q.visible = false; scene.add(q); fog[r].userData.q = q;
+    sv.visible = false; sv.userData.noAO = true; r3Int.add(sv); smokeVol[r] = sv;
+    const q = label('?', '#8d9db0', { scale: 0.008, always: false }); q.position.set((x1 + x2) / 2, R3 + 1.5, -(y1 + y2) / 2); q.visible = false; r3Int.add(q); fog[r].userData.q = q;
   }
-  v1Fig = person('#c9c2d6', '#d9b9a0', true, false, '#d8d8d8'); v1Fig.position.set(9.6, R3 + 0.62, -2.0); v1Fig.rotation.z = Math.PI / 2; v1Fig.rotation.y = Math.PI / 2; scene.add(v1Fig);
+  v1Fig = person('#c9c2d6', '#d9b9a0', true, false, '#d8d8d8'); v1Fig.position.set(9.6, R3 + 0.62, -2.0); v1Fig.rotation.z = Math.PI / 2; v1Fig.rotation.y = Math.PI / 2; r3Int.add(v1Fig);
 }
 
 // ------------------------------------------------------------------ vehicules
@@ -683,8 +728,10 @@ function stepSmoke(dt) {
 }
 
 // ------------------------------------------------------------------ mise a jour depuis l'etat du jeu
-let acc = 0, cut = false, cutK = 0;
+let acc = 0, cut = false, cutK = 0, cutLevel = 3;
 S3.setCut = v => { cut = v; };
+S3.setCutLevel = L => { cutLevel = Math.max(0, Math.min(4, L)); };
+S3.cutLevel = () => cutLevel;
 S3.isCut = () => cut;
 const tmpV = new T.Vector3();
 function locWorld(loc, a) {
@@ -713,20 +760,35 @@ S3.update = function (dtReal, now) {
   const W = G.W;
   // vue en coupe (animation)
   cutK += ((cut ? 1 : 0) - cutK) * Math.min(1, dtReal * 5);
-  const showUpper = cutK < 0.5;
+  const showUpper = cutK < 0.5, isCut = cutK > 0.5;
   for (const o of upper) o.visible = showUpper;
-  CLIP.constant = cutK > 0.5 ? R3 + 1.15 : 1e4;
-  r3WinGroup.visible = cutK < 0.5;
+  CLIP.constant = isCut ? cutLevel * LV + 1.15 : 1e4;
+  for (let L = 0; L < 5; L++) { levelGroups[L].visible = !isCut || L <= cutLevel; winGroups[L].visible = !isCut || L < cutLevel; }
+  r3Int.visible = !isCut || cutLevel >= 3;
+  const cutR3 = isCut && cutLevel === 3;
   // portes
   for (const id in S3.doors) S3.doors[id].visible = !GAME.isOpen(id);
   for (const s of [0, 1]) { const lf = cageDoor.userData['leaf' + s]; const tgt = GAME.isOpen('IMMEUBLE') ? lf.userData.dir * 1.35 : 0; lf.rotation.y += (tgt - lf.rotation.y) * Math.min(1, dtReal * 3); }
   exuLid.rotation.x = GAME.isOpen('EXUTOIRE') ? -1.2 : 0;
+  // calcul FDS le plus proche des decisions du joueur
+  let fdsOK = false;
+  if (fds) {
+    const ev = G.fdsEv || (G.fdsEv = {});
+    if (ev.exu == null && GAME.isOpen('EXUTOIRE')) ev.exu = W.t;
+    if (ev.paliereClosed == null && W.t > 100 && !GAME.isOpen('PALIERE')) ev.paliereClosed = W.t;
+    ev.attack = G.attackT; ev.vpp = G.vppT;
+    fds.setCut(isCut, cutLevel * LV + 1.15 - R3);
+    fds.update(ev, W.t, dtReal * (G.speed || 1));
+    const fi = fds.info(); fdsOK = fi.ok;
+    const bd = document.getElementById('fds-badge');
+    if (bd) { bd.hidden = !fdsOK; if (fdsOK) { const txt = `<b>FDS</b> ${fi.id.slice(0, 2)} · ${fi.label} · t = ${Math.floor(fi.tf / 60)} min`; if (bd._t !== txt) { bd.innerHTML = txt; bd._t = txt; } } }
+  }
   // brouillard / connaissance du R+3 (visible seulement en coupe)
   for (const r in fog) {
     const s = G.K.rooms[r];
-    fog[r].visible = cutK > 0.5 && !s; fog[r].userData.q.visible = cutK > 0.5 && !s;
+    fog[r].visible = cutR3 && !s; fog[r].userData.q.visible = cutR3 && !s;
     const sv = smokeVol[r];
-    if (s && cutK > 0.5 && s.zr < 2.4) {
+    if (s && cutR3 && s.zr < 2.4 && !fdsOK) {
       const [x1, x2, y1, y2] = ROOM_RECT[r]; const top = Math.min(2.6, 1.15 + 0.1), bot = Math.min(s.zr, top - 0.05);
       sv.visible = true; sv.scale.y = Math.max(0.05, top - bot); sv.position.set((x1 + x2) / 2, R3 + bot + (top - bot) / 2, -(y1 + y2) / 2);
       sv.material.opacity = s.onFire ? 0.35 : clamp(0.25 + s.sev * 0.18, 0.2, 0.75);
@@ -746,7 +808,7 @@ S3.update = function (dtReal, now) {
     const e = W.ext[id];
     const w = FRONT_WIN.concat(BACK_WIN).find(x => x[0] === id), front = !o.rear;
     if (o.open && e && e.m > 0.02) {
-      const rate = clamp(e.m * 14, 4, 60) * (quality === 'standard' ? 1 : 0.45);
+      const rate = clamp(e.m * 14, 4, 60) * (quality === 'standard' ? 1 : 0.45) * (fdsOK ? 0.3 : 1);
       const nEm = rate * dtReal + (Math.random() < (rate * dtReal) % 1 ? 1 : 0);
       const dark = e.soot / Math.max(e.m, 1e-3) > 0.0015;
       for (let k = 0; k < Math.floor(nEm); k++) {
@@ -756,10 +818,15 @@ S3.update = function (dtReal, now) {
     }
     // flammes a l'ouverture
     const fl = flames.find(f => f.id === id);
-    const flameOn = o.open && (((e && e.fuelQ > 60)) || (z.flashed && fire && z.Tu > 700));
+    let flameOn = o.open && (((e && e.fuelQ > 60)) || (z.flashed && fire && z.Tu > 700)), k = clamp(z.fireQ / 6000, 0.35, 1);
+    // facade rue : flammes lues dans le calcul FDS (puissance et temperature juste devant l'ouverture)
+    if (fdsOK && front) {
+      const xm = (w[1] + w[2]) / 2;
+      const qa = fds.sample(xm, R3 + w[4] - 0.1, 0.25), qb = fds.sample(xm, R3 + w[4] + 0.5, 0.35);
+      if (qa && qb) { const h = Math.max(qa.HRR, qb.HRR), Tm = Math.max(qa.T, qb.T); flameOn = h > 40 || Tm > 550; k = clamp(h / 1500 + (Tm - 400) / 1200, 0.35, 1); }
+    }
     fl.grp.visible = flameOn;
     if (flameOn) {
-      const k = clamp(z.fireQ / 6000, 0.35, 1);
       fl.arr.forEach((s, j) => {
         const x = w[1] + (j + 0.5) * (w[2] - w[1]) / fl.arr.length;
         const hh = (0.55 + 0.9 * k) * (0.7 + 0.3 * Math.sin(now / 70 + j * 1.9));
@@ -782,7 +849,7 @@ S3.update = function (dtReal, now) {
   // feu interieur (canape / piece) visible en coupe
   const sofa = flames.find(f => f.id === 'SOFA');
   const sejFire = roomOnFire(W, 'SEJ');
-  sofa.grp.visible = sejFire && cutK > 0.5 && !!G.K.rooms.SEJ;
+  sofa.grp.visible = sejFire && cutR3 && !!G.K.rooms.SEJ;
   if (sofa.grp.visible) sofa.arr.forEach((s, j) => { const hh = 1.2 * (0.7 + 0.3 * Math.sin(now / 60 + j * 2.3)); s.position.set(0.8 + j * 0.45, R3 + 0.5 + hh * 0.4, -1.1 - (j % 2) * 0.3); s.scale.set(0.9, hh, 1); });
   // lumiere du feu
   const Qs = W.Z.SEJ.fireQ + W.Z.CUI.fireQ * 0.6 + W.Z.CH1.fireQ * 0.6;
@@ -860,9 +927,10 @@ S3.update = function (dtReal, now) {
     t.figs.forEach((f, j) => f.children.forEach(c => { if (c.userData.leg) c.rotation.x = walking ? Math.sin(now / 120 + j) * 0.5 * c.userData.leg : 0; }));
     t.figs.forEach((f, j) => { if (f.userData.arm) f.userData.arm.rotation.x = walking ? -Math.sin(now / 120 + j) * 0.4 : -0.3; if (f.userData.arm2) f.userData.arm2.rotation.x = walking ? Math.sin(now / 120 + j) * 0.4 : -0.3; });
     const inside = a.loc !== 'RUE' || (a.next && a.prog > 0.75);
-    const atR3 = GAME.ROOMS.includes(a.loc) || a.loc === 'CAGE_R3';
-    t.figs.forEach(f => f.visible = !inside || (cutK > 0.5 && atR3));
-    t.label.material.opacity = inside && !(cutK > 0.5 && atR3) ? 0.75 : 1;
+    const lvA = GAME.ROOMS.includes(a.loc) ? 3 : a.loc.startsWith('CAGE_') ? GAME.LEVELS.indexOf(a.loc.slice(5)) : a.loc === 'R4_APT' ? 4 : -1;
+    const seen = cutK > 0.5 && lvA >= 0 && lvA <= cutLevel;
+    t.figs.forEach(f => f.visible = !inside || seen);
+    t.label.material.opacity = inside && !seen ? 0.75 : 1;
     t.label.visible = S3.labelsOn;
     // victime portee
     t.carry = a.carry;
@@ -885,9 +953,9 @@ S3.update = function (dtReal, now) {
   }
   // victime 1
   const v1 = G.victims[0];
-  if (v1.carried && teams[v1.carried]) { const tp = teams[v1.carried].group.position; v1Fig.position.set(tp.x, tp.y + 0.55, tp.z); v1Fig.visible = !(v1.loc !== 'RUE' && !(cutK > 0.5 && (GAME.ROOMS.includes(v1.loc) || v1.loc === 'CAGE_R3'))); }
+  if (v1.carried && teams[v1.carried]) { const tp = teams[v1.carried].group.position; v1Fig.position.set(tp.x, tp.y + 0.55, tp.z); v1Fig.visible = !(v1.loc !== 'RUE' && !(cutK > 0.5 && cutLevel >= 3 && (GAME.ROOMS.includes(v1.loc) || v1.loc.startsWith('CAGE_')))); }
   else if (v1.atRue) { v1Fig.position.set(14.2, 0.45, 2.4); v1Fig.visible = true; }
-  else { v1Fig.position.set(9.6, R3 + 0.62, -2.0); v1Fig.visible = cutK > 0.5 && !!G.K.rooms.CH1; }
+  else { v1Fig.position.set(9.6, R3 + 0.62, -2.0); v1Fig.visible = cutR3 && !!G.K.rooms.CH1; }
   // voisin du R+4
   const v2 = G.victims[1];
   neighbourFig.visible = (v2.mode === 'fenetre' || v2.mode === 'confine') && showUpper;
@@ -939,13 +1007,24 @@ S3.pick = function (cx, cy) {
   ray.setFromCamera(mouse, camera);
   // les etiquettes d'equipes sont prioritaires (toujours visibles)
   for (const id in teams) { const lb = teams[id].label; const hit = ray.intersectObject(lb, false); if (hit.length) return { type: 'team', id }; }
+  // temoins : tolerance a l'ecran autour de la silhouette et de son repere « ? » (figurines petites, souvent masquees)
+  let bw = null, bd = 30;
+  for (const id in witnessFig) {
+    const f = witnessFig[id]; if (!isVisibleChain(f)) continue;
+    for (const hy of [0.5, 1.1, 1.7, 2.25]) {
+      const p = f.localToWorld(new T.Vector3(0, hy, 0)).project(camera); if (p.z > 1) continue;
+      const sx = r.left + (p.x + 1) / 2 * r.width, sy = r.top + (1 - p.y) / 2 * r.height, d = Math.hypot(sx - cx, sy - cy);
+      if (d < bd) { bd = d; bw = id; }
+    }
+  }
+  if (bw) return { type: 'witness', id: bw };
   const hits = ray.intersectObjects(pickables.filter(m => m.visible && isVisibleChain(m)), false);
   for (const h of hits) { let o = h.object; while (o && !o.userData.pick) o = o.parent; if (o) return o.userData.pick; }
   return null;
 };
 function isVisibleChain(o) { while (o) { if (!o.visible) return false; o = o.parent; } return true; }
 S3.view = function (name) {
-  const views = { rue: [[15, 7.5, 16.5], [4, 6.5, -3]], arriere: [[-6, 14, -34], [4, 6, -5]], coupe: [[6, 26, 10], [5, 7.8, -4.3]], aerien: [[30, 34, 26], [4, 5, -4]] };
+  const views = { rue: [[15, 7.5, 16.5], [4, 6.5, -3]], arriere: [[-6, 14, -34], [4, 6, -5]], coupe: [[6, cutLevel * LV + 18.2, 10], [5, cutLevel * LV, -4.3]], aerien: [[30, 34, 26], [4, 5, -4]] };
   const v = views[name]; if (!v) return;
   S3.anim = { from: camera.position.clone(), to: new T.Vector3(...v[0]), tf: controls.target.clone(), tt: new T.Vector3(...v[1]), k: 0 };
 };

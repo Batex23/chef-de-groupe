@@ -2,22 +2,22 @@
 // MOTEUR FEU PAR ZONES (deux couches par piece) - prototype
 // Chaque piece : couche chaude (haut) / couche froide (bas). Echanges par les
 // ouvertures (portes, fenetres, exutoire) par difference de masse volumique.
-// Tous les parametres marques [CAL] seront ajustes sur les calculs FDS.
+// Les parametres marques [CAL] sont ajustes sur les calculs FDS (fds/calibrage, cas R0 du 02/11/2026).
 // ===========================================================================
 const CFG = {
   dt: 0.1,            // pas de temps (s)
   Tamb: 293,          // K
   cp: 1.0,            // kJ/kg/K
   g: 9.81,
-  Cd: 0.7,            // coefficient de decharge des ouvertures [CAL]
+  Cd: 0.65,            // coefficient de decharge des ouvertures [CAL]
   dHc: 25000,         // kJ/kg chaleur de combustion du mobilier
   EO2: 13100,         // kJ par kg d'O2 consomme
-  radLoss: 0.25,      // part de la puissance perdue par rayonnement vers les parois [CAL]
-  hConv: 0.010,       // kW/m2/K echange couche chaude-parois [CAL]
-  wallC: 45,          // kJ/m2/K inertie de paroi (premiers cm de beton) [CAL]
+  radLoss: 0.30,      // part de la puissance perdue par rayonnement vers les parois [CAL]
+  hConv: 0.019,       // kW/m2/K echange couche chaude-parois [CAL]
+  wallC: 112,          // kJ/m2/K inertie de paroi (premiers cm de beton) [CAL]
   yCO: 0.04, yCOsv: 0.20, ySoot: 0.10,   // rendements (sv = sous-ventile)
   Km: 8700,           // m2/kg coefficient d'extinction massique des suies
-  glassBreakK: 673,   // 400 degC en partie haute -> bris vitrage (comme les cas FDS)
+  glassBreakK: 462,   // 400 degC en partie haute -> bris vitrage (comme les cas FDS)
   flashK: 823,        // 550 degC couche chaude -> embrasement generalise [CAL]
   igniteK: 873,       // 600 degC -> inflammation d'une piece voisine [CAL]
   roomHRRperM2: 250,  // kW/m2 puissance d'une piece embrasee (limitee ensuite par l'air)
@@ -26,8 +26,12 @@ const CFG = {
   smoulderKW: 30,     // foyer residuel (braises sous les debris) apres abattement [CAL]
   repriseMin: 360,    // delai mini de reprise d'un foyer residuel non deblaye (s) [CAL]
   repriseVar: 300,    // dispersion du delai de reprise (s) [CAL]
-  vppCage: 3.0,       // kg/s extraits de la cage par le VPP (porte d'immeuble ouverte + exutoire) [CAL]
-  vppApt: 1.6,        // kg/s extraits du logement (porte paliere + fenetre ouvertes) [CAL]
+  vppCage: 4.3,       // kg/s extraits de la cage par le VPP (porte d'immeuble ouverte + exutoire) [CAL]
+  vppApt: 0.5,        // kg/s extraits du logement (porte paliere + fenetre ouvertes) [CAL]
+  flashHold: 45,
+  extIgnK: 450,       // temperature de sortie minimale pour que les imbrules brulent en facade (K) [CAL]      // s au-dela du seuil de Thomas avant embrasement generalise [CAL]
+  entK: 1.85,          // multiplicateur de l'entrainement d'air du panache (Heskestad) [CAL]
+  leakK: 0.43,         // multiplicateur des fuites des ouvrants fermes [CAL]
 };
 const RHO = T => 353 / T;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -105,7 +109,11 @@ function visibilityU(z) {
 // Stratification de la cage (zone unique) : sous le niveau sinistre, les fumees
 // se refroidissent et se diluent en descendant. Profil provisoire [CAL : arbre FDS].
 function cageFactor(h) { return clamp(0.3 + 0.7 * h / 9.0, 0.3, 1); }
+// Conditions lues dans le calcul FDS le plus proche (branche par le rendu quand les donnees sont chargees).
+// Le modele de zones ne sert plus qu'en secours (donnees absentes, zone hors du domaine FDS).
+const FDS_HOOK = { fn: null };
 function conditionsAt(W, zid, hrel) {
+  if (FDS_HOOK.fn) { const c = FDS_HOOK.fn(zid, hrel, W.t); if (c) return c; }
   if (zid === 'CAGE') {
     const c = conditionsAtRaw(W, zid, hrel), k = cageFactor(hrel);
     if (k < 1 && c.smoke) { c.T = CFG.Tamb + (c.T - CFG.Tamb) * k; c.CO *= k; c.O2 = 20.9 - (20.9 - c.O2) * k; c.vis = Math.min(30, c.vis / k); }
@@ -127,6 +135,11 @@ function conditionsAtRaw(W, zid, hrel) {
 function fireHRRpotential(f, t) {
   if (f.out) return 0;
   let q;
+  if (f.ramp) {   // puissance imposee [[t, kW], ...] (calibrage sur les cas FDS)
+    const R = f.ramp; let i = 0; while (i < R.length - 1 && R[i + 1][0] < t) i++;
+    const [t0, q0] = R[i], [t1, q1] = R[Math.min(i + 1, R.length - 1)];
+    return (t1 > t0 ? q0 + (q1 - q0) * clamp((t - t0) / (t1 - t0), 0, 1) : q0) * f.k;
+  }
   if (f.kind === 'piece') q = f.peak * clamp((t - f.t0) / 60, 0, 1);  // montee en 1 min
   else q = Math.min(f.peak, f.alpha * Math.pow(Math.max(0, t - f.t0), 2));
   const rem = f.energy - f.burned;
@@ -154,7 +167,7 @@ function step(W) {
       transfer(A, null, m, o);
       continue;
     }
-    const w = o.open ? o.w : o.leak;
+    const w = o.open ? o.w : o.leak * CFG.leakK;
     if (w <= 0) continue;
     for (const [src, dst] of [[A, B], [B, A]]) {
       if (!src) continue;
@@ -189,8 +202,10 @@ function step(W) {
       d.CO += pkt.CO * 0.5; d.So += pkt.So * 0.5;
     } else {
       // sortie a l'exterieur : les imbrules brulent en facade (flammes visibles)
-      src.extQ += (pkt.Fu / dt) * CFG.dHc;
-      W.ext[o.id] = { soot: pkt.So / dt, fuelQ: (pkt.Fu / dt) * CFG.dHc, m };
+      // les imbrules ne s'enflamment dehors que s'ils sortent chauds (sinon : fumee epaisse sans flamme)
+      const fq = src.Tu > CFG.extIgnK ? (pkt.Fu / dt) * CFG.dHc : 0;
+      src.extQ += fq;
+      W.ext[o.id] = { soot: pkt.So / dt, fuelQ: fq, m };
     }
   }
 
@@ -206,10 +221,10 @@ function step(W) {
     const Qc = Math.max(1, (1 - CFG.radLoss) * Math.max(f.lastQ || 50, 20));
     if (zr > f.base + 0.05) {
       const h = zr - f.base;
-      mEnt = 0.071 * Math.cbrt(Qc) * Math.pow(h, 5 / 3) + 0.0018 * Qc;
+      mEnt = CFG.entK * (0.071 * Math.cbrt(Qc) * Math.pow(h, 5 / 3) + 0.0018 * Qc);
       YO2e = z.YO2L;
     } else {
-      mEnt = 0.071 * Math.cbrt(Qc) * Math.pow(0.6, 5 / 3) + 0.0018 * Qc;
+      mEnt = CFG.entK * (0.071 * Math.cbrt(Qc) * Math.pow(0.6, 5 / 3) + 0.0018 * Qc);
       YO2e = z.MO2 / Math.max(z.Mu, 1e-6);
     }
     const eff = clamp((YO2e - 0.10) / 0.06, 0, 1);
@@ -303,7 +318,7 @@ function step(W) {
 
   // ---- 4. evenements physiques
   for (const o of W.O) {
-    if (o.glass && !o.open && !o.broken) {
+    if (o.glass && !o.open && !o.broken && !o.noBreak) {
       const z = Z[o.a];
       if (ifcAbs(z) < o.zt - 0.2 && z.Tu > CFG.glassBreakK) {
         o.open = true; o.broken = true;
@@ -316,8 +331,12 @@ function step(W) {
   }
   for (const id in Z) {
     const z = Z[id];
+    // Embrasement : couche tres chaude, ou puissance au-dela du seuil de Thomas tenue assez longtemps
+    // pour enflammer le mobilier voisin par rayonnement (FDS impose la puissance du canape et ne le
+    // predit pas ; le cale sur R0 donne ~300-390 degC sous 3 MW). [CAL : cas de croissance a venir]
+    if (hasFire(W, id) && z.fireQ > thomasQ(W, z) && layerRel(z) < 1.5) z.foT = (z.foT || 0) + dt; else z.foT = Math.max(0, (z.foT || 0) - dt);
     if (!z.flashed && z.fuelMJ > 0 && hasFire(W, id) && layerRel(z) < 1.3 &&
-        (z.Tu > CFG.flashK || (z.Tu > 673 && z.fireQ > thomasQ(W, z)))) {
+        (z.Tu > CFG.flashK || z.foT > CFG.flashHold)) {
       z.flashed = true;
       W.fires.push({ zone: id, t0: W.t, peak: CFG.roomHRRperM2 * z.A, energy: z.fuelMJ, burned: 0, k: 1, base: 0.2, out: false, kind: 'piece' });
       W.events.push({ t: W.t, type: 'embrasement', id });
@@ -382,6 +401,6 @@ function fedRate(c) {
   return r;
 }
 
-const SIM = { thomasQ, CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, visibilityU, fedRate, hasFire, hasResidual, roomOnFire, clamp };
+const SIM = { FDS_HOOK, thomasQ, CFG, createWorld, step, layerRel, ifcAbs, conditionsAt, visibilityU, fedRate, hasFire, hasResidual, roomOnFire, clamp };
 if (typeof module !== "undefined") module.exports = SIM;
 if (typeof window !== "undefined") window.SIM = SIM;

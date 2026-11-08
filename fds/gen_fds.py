@@ -147,7 +147,12 @@ def build(name, sc):
             w("&MESH ID='PARVIS', IJK=15,13,14, XB=-3.0,0.0,8.6,11.2,-7.8,-5.0 / ! devant la porte d'immeuble (VPP) => 4 processus MPI")
     w("")
     w(f"&TIME T_END={T_END:.1f} /")
-    w("&DUMP DT_DEVC=2.0, DT_HRR=2.0, DT_SLCF=10.0, DT_BNDF=30.0 /" if RAPIDE else "&DUMP DT_DEVC=1.0, DT_HRR=1.0, DT_SLCF=5.0, DT_BNDF=10.0 /")
+    w("&DUMP DT_DEVC=2.0, DT_HRR=2.0, DT_SLCF=10.0, DT_BNDF=30.0," if RAPIDE else "&DUMP DT_DEVC=1.0, DT_HRR=1.0, DT_SLCF=5.0, DT_BNDF=10.0,")
+    # Volumes complets pour le jeu (fichiers .q) : toutes les 20 s, temperature, visibilite, CO, O2 et puissance
+    # volumique (flammes). Fumee 3D (.s3d) en plus, comme Smokeview.
+    w("      SMOKE3D=T, DT_PL3D=20.0, WRITE_XYZ=T,")
+    w("      PLOT3D_QUANTITY(1:5)='TEMPERATURE','VISIBILITY','VOLUME FRACTION','VOLUME FRACTION','HRRPUV',")
+    w("      PLOT3D_SPEC_ID(3:4)='CARBON MONOXIDE','OXYGEN' /")
     w("&MISC TMPA=20.0, HUMIDITY=50.0 /")
     w("")
     w("! =====================================================================")
