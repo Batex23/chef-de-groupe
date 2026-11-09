@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Feu de forêt FDF3</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="src/fdf/fdf.css">
+</head>
+<body class="accueil">
+<header class="barre">
+  <div class="marque">Feu de forêt <small>Chef de groupe FDF3 · Salles (33)</small></div>
+  <ol class="phases" id="phases" aria-label="Phases de l'intervention"></ol>
+  <div class="horloge"><b id="heure">--:--</b><small id="meteo"></small></div>
+  <div class="rythme" role="group" aria-label="Rythme du temps">
+    <button data-v="0" title="Pause">II</button><button data-v="1" aria-pressed="true">×1</button><button data-v="2">×2</button><button data-v="4">×4</button><button data-v="8">×8</button>
+  </div>
+</header>
+
+<main class="jeu">
+  <section class="carte" aria-label="Carte">
+    <canvas id="fond"></canvas>
+    <canvas id="dessus"></canvas>
+    <div class="outils" id="outils">
+      <div class="og" role="group" aria-label="Fond de carte">
+        <button data-fond="cartoguide" aria-pressed="true">Cartoguide</button><button data-fond="ortho">Photo</button><button data-fond="peuplements">Peuplements</button>
+      </div>
+      <div class="og crayons" id="crayons" role="group" aria-label="Crayons de l'analyse ZI"></div>
+      <div class="og" role="group" aria-label="Outils">
+        <button data-outil="mesure" title="Mesurer une distance">Mesure</button>
+        <button data-outil="gomme" title="Effacer un tracé">Gomme</button>
+        <button id="b-feu" title="Centrer sur la fumée">Fumée</button>
+      </div>
+    </div>
+    <div class="legende" id="legende" hidden></div>
+    <div class="info" id="info" aria-live="polite"></div>
+  </section>
+
+  <aside class="panneau" aria-label="Commandement">
+    <nav class="onglets" role="tablist">
+      <button role="tab" data-onglet="phase" aria-selected="true">Phase</button>
+      <button role="tab" data-onglet="moyens">Moyens</button>
+      <button role="tab" data-onglet="radio">Radio <span id="nb-radio"></span></button>
+      <button role="tab" data-onglet="memento">Mémento</button>
+    </nav>
+    <div class="contenu" id="o-phase"></div>
+    <div class="contenu" id="o-moyens" hidden></div>
+    <div class="contenu" id="o-radio" hidden><div class="filtres" id="filtres"></div><ol class="radio" id="radio"></ol></div>
+    <div class="contenu" id="o-memento" hidden></div>
+  </aside>
+</main>
+
+<div class="accueil-ecran" id="accueil">
+  <div class="carton">
+    <h1>Feu de forêt <span>Formation chef de groupe FDF3</span></h1>
+    <p>Secteur réel de Salles (Caudos, Bilos, Lugos). Carte IGN, peuplements mesurés au LiDAR, carroyage et points d'eau du cartoguide DFCI. Le feu se propage selon le vent, la sécheresse et les peuplements (modèle de Rothermel calé sur le mémento SDIS 33).</p>
+    <p>Vous êtes chef de groupe (VLCG), engagé avec plusieurs UIFF (2 CCF + 1 VLHR, chef d'agrès FDF2). Vous déroulez : <b>DPIF, analyse de la ZI sur carte, message d'arrivée, reconnaissance, actions réflexes, messages et raisonnement tactique</b>.</p>
+    <div class="choix">
+      <label>Vent <select id="c-vent"><option value="alea">Aléatoire</option><option value="3">3 m/s</option><option value="5">5 m/s</option><option value="7">7 m/s</option><option value="10">10 m/s</option><option value="14">14 m/s</option></select></label>
+      <label>Sécheresse <select id="c-sech"><option value="forte">Forte</option><option value="moderee">Modérée</option><option value="extreme">Extrême</option></select></label>
+      <label>Départ du feu <select id="c-lieu"><option value="alea">N'importe où sur la carte</option></select></label>
+    </div>
+    <button class="go" id="go" disabled>Chargement de la carte…</button>
+    <p class="src">Sources : IGN (BD Forêt V2, BD TOPO, LiDAR HD, BD ORTHO), cartoguide DFCI SDIS 33, mémento FDF SDIS 33 (2025), fiches GOP 1.2.1 à 1.2.3.</p>
+    <p><a href="index.html">← Retour aux autres scénarios</a></p>
+  </div>
+</div>
+
+<script src="src/fdf/feu.js"></script>
+<script src="src/fdf/carte.js"></script>
+<script src="src/fdf/jeu.js"></script>
+</body>
+</html>

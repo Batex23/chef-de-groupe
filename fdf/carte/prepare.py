@@ -172,6 +172,12 @@ def main():
         for line in walk_lines(f['geometry']):
             pts = simplify([loc(q) for q in line], 2.0)
             R.append({'k': kind(p), 'n': nom, 'g': p.get('gabarit_dfci') or '', 'acc': p.get('acces_vehicule_leger') or '', 'p': pts})
+    # pistes DFCI du cartoguide (traits rouge et noir releves sur les captures recalees) : score >= 0,35
+    sc_p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pistes_dfci_cartoguide.json')
+    if os.path.exists(sc_p):
+        sc = json.load(open(sc_p))
+        for i, r in enumerate(R):
+            if sc.get(str(i), 0) >= 0.35 and r['k'] != 'route': r['k'] = 'dfci'
     HY = []
     for f in load(src, 'hydro_lignes'):
         p = f['properties']
@@ -217,7 +223,7 @@ def main():
             'couches': ['combustible', 'hauteur_dm', 'altitude_x5'],
             'combustibles': [{'id': i, 'code': c, 'nom': n, 'couleur': col} for i, c, n, col in FUELS],
             'sources': 'IGN BD Forêt V2, BD TOPO V3, LiDAR HD (MNH), RGE ALTI, BD ORTHO – Géoplateforme',
-            'dfci': {'origine_l93': [318000, 6136000], 'pas': 400, 'note': 'carroyage du cartoguide SDIS 33 : colonne = 2 lettres (AA = 0), rangee = nombre'},
+            'dfci': {'origine_l93': [317977, 6135925], 'pas': 400, 'note': 'carroyage du cartoguide SDIS 33 : colonne = 2 lettres (AA = 0), rangee = nombre'},
             'points_eau': PEC, 'routes': R, 'hydro': HY, 'bati': B, 'lieux': LD, 'sensibles': PS, 'elec': EL, 'eau': PE, 'communes': COM}
     json.dump(meta, open(os.path.join(out, 'carte.json'), 'w'), ensure_ascii=False, separators=(',', ':'))
     ortho.save(os.path.join(out, 'ortho.jpg'), quality=72)
