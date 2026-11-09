@@ -29,6 +29,7 @@
       <div class="og crayons" id="crayons" role="group" aria-label="Crayons de l'analyse ZI"></div>
       <div class="og" role="group" aria-label="Outils">
         <button data-outil="texte" title="Écrire sur la carte (couleur du crayon choisi)">Texte</button>
+        <button data-outil="numero" title="Numéroter (obstacles en orange, points d'eau en bleu : choisir d'abord la couleur)">N°</button>
         <button id="b-regle" title="Règle feu de forêt virtuelle">Règle FDF</button>
         <button data-outil="mesure" title="Mesurer une distance">Mesure</button>
         <button data-outil="gomme" title="Effacer un tracé">Gomme</button>
@@ -47,20 +48,28 @@
       <button role="tab" data-onglet="phase" aria-selected="true">Phase</button>
       <button role="tab" data-onglet="moyens">Moyens</button>
       <button role="tab" data-onglet="radio">Radio <span id="nb-radio"></span></button>
+      <button role="tab" data-onglet="ticket">Ticket</button>
       <button role="tab" data-onglet="memento">Mémento</button>
     </nav>
     <div class="contenu" id="o-phase"></div>
     <div class="contenu" id="o-moyens" hidden></div>
     <div class="contenu" id="o-radio" hidden><div class="filtres" id="filtres"></div><ol class="radio" id="radio"></ol></div>
+    <div class="contenu" id="o-ticket" hidden></div>
     <div class="contenu" id="o-memento" hidden></div>
-    <div class="radios" aria-label="Radios">
-      <button class="poste" data-poste="GRP 272"><b>GRP 272</b><small>CODIS</small></button>
-      <button class="poste" data-poste="DIR 654"><b>DIR 654</b><small>chefs d'agrès</small></button>
-      <button class="poste libre" id="b-libre" title="Message en texte libre"><b>Texte</b><small>message libre</small></button>
+    <div class="radios" aria-label="Radios : cliquez pour parler">
+      <button class="poste" data-poste="GRP 272" title="Cliquez pour parler au CODIS"><svg class="ico" viewBox="0 0 32 40" aria-hidden="true"><rect x="7" y="10" width="18" height="28" rx="4" fill="#f08c2a" stroke="#0b1322" stroke-width="1.5"/><rect x="18" y="1" width="3" height="11" rx="1.5" fill="#0b1322"/><rect x="10" y="14" width="12" height="7" rx="1" fill="#cfe9ff" opacity=".9"/><circle cx="12" cy="27" r="1.6" fill="#0b1322"/><circle cx="16" cy="27" r="1.6" fill="#0b1322"/><circle cx="20" cy="27" r="1.6" fill="#0b1322"/><circle cx="12" cy="32" r="1.6" fill="#0b1322"/><circle cx="16" cy="32" r="1.6" fill="#0b1322"/><circle cx="20" cy="32" r="1.6" fill="#0b1322"/><text x="16" y="20" text-anchor="middle" font-size="6" font-weight="700" fill="#0b1322" font-family="sans-serif">CODIS</text></svg><span><b>CODIS</b><small>GRP 272</small></span><i class="bip"></i></button>
+      <button class="poste" data-poste="DIR 654" title="Cliquez pour parler aux chefs d'agrès"><svg class="ico" viewBox="0 0 32 40" aria-hidden="true"><rect x="7" y="10" width="18" height="28" rx="4" fill="#3fb36b" stroke="#0b1322" stroke-width="1.5"/><rect x="18" y="1" width="3" height="11" rx="1.5" fill="#0b1322"/><rect x="10" y="14" width="12" height="7" rx="1" fill="#cfe9ff" opacity=".9"/><circle cx="12" cy="27" r="1.6" fill="#0b1322"/><circle cx="16" cy="27" r="1.6" fill="#0b1322"/><circle cx="20" cy="27" r="1.6" fill="#0b1322"/><circle cx="12" cy="32" r="1.6" fill="#0b1322"/><circle cx="16" cy="32" r="1.6" fill="#0b1322"/><circle cx="20" cy="32" r="1.6" fill="#0b1322"/><text x="16" y="20" text-anchor="middle" font-size="6" font-weight="700" fill="#0b1322" font-family="sans-serif">CA</text></svg><span><b>Chefs d'agrès</b><small>DIR 654</small></span><i class="bip"></i></button>
+      <button class="poste" data-poste="Canal 18" title="Air-sol : avions bombardiers d'eau"><svg class="ico" viewBox="0 0 32 40" aria-hidden="true"><rect x="7" y="10" width="18" height="28" rx="4" fill="#facc15" stroke="#0b1322" stroke-width="1.5"/><rect x="18" y="1" width="3" height="11" rx="1.5" fill="#0b1322"/><rect x="10" y="14" width="12" height="7" rx="1" fill="#cfe9ff" opacity=".9"/><circle cx="12" cy="27" r="1.6" fill="#0b1322"/><circle cx="16" cy="27" r="1.6" fill="#0b1322"/><circle cx="20" cy="27" r="1.6" fill="#0b1322"/><circle cx="12" cy="32" r="1.6" fill="#0b1322"/><circle cx="16" cy="32" r="1.6" fill="#0b1322"/><circle cx="20" cy="32" r="1.6" fill="#0b1322"/><path d="M16 15 l1 2.5 4 1.2 -4 1 -.4 2.3 1.3 1 -3.8 0 1.3-1 -.4-2.3 -4-1 4-1.2z" fill="#0b1322"/></svg><span><b>Air-sol</b><small>canal 18</small></span><i class="bip"></i></button>
     </div>
     <div class="parole" id="parole" hidden>
       <div id="parole-txt" class="transcrit" contenteditable="true" aria-label="Message (modifiable)"></div>
-      <div class="btns"><select id="parole-canal"><option>GRP 272</option><option>DIR 654</option></select><button class="btn" id="parole-ok">Transmettre</button><button class="btn sec" id="parole-x">Annuler</button></div>
+      <div class="btns"><select id="parole-canal"><option>GRP 272</option><option>DIR 654</option></select><button class="btn" id="parole-ok">Transmettre</button><button class="btn sec" id="parole-x">Annuler</button><button class="btn sec" id="b-libre" title="Écrire au lieu de parler">Clavier</button></div>
+    </div>
+    <div class="brouillon">
+      <div class="bbarre"><b>Brouillon</b>
+        <span class="bcoul" role="group" aria-label="Couleur du texte"><button data-bc="#e2202a" style="background:#e2202a" title="Rouge"></button><button data-bc="#16a34a" style="background:#16a34a" title="Vert"></button><button data-bc="#2563eb" style="background:#2563eb" title="Bleu"></button><button data-bc="#f08c2a" style="background:#f08c2a" title="Orange"></button><button data-bc="#8b2fc9" style="background:#8b2fc9" title="Violet"></button><button data-bc="#111111" style="background:#111111" title="Noir"></button></span>
+        <button class="btn sec petit" id="b-ticket">Ticket de départ</button></div>
+      <div class="notes" id="notes" contenteditable="true" aria-label="Brouillon de notes"></div>
     </div>
   </aside>
 </main>

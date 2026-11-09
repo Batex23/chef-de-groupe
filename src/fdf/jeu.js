@@ -107,6 +107,7 @@
       dirtyFond: true, sel: null, outil: null, crayon: null, demandes: [], lignes: [], fin: false, etatFeu: 'en cours', tFixe: null, tMaitrise: null,
     });
     G.inv = INV.genere(carte, R, nivK);
+    initReserves();
     F = G.feu = new FEU.Feu(carte, { vent, dir, secheresse: sech, graine: seed });
     F.allume(ix, iy, 0);
     F.avance(G.age);
@@ -129,7 +130,7 @@
     radio('CODIS 33', 'CDG Salles', `Départ feu de forêt. Commune de ${G.ticket.commune}, lieu-dit ${G.ticket.ld}, coordonnées ${G.ticket.coord}. Fumée signalée par la ${G.ticket.source}. Départ : CDG Salles, ${G.unites.map(u => u.label).join(', ')}.`, 'GRP 272', 'codis');
     document.body.classList.remove('accueil');
     vue.centre(G.cdg.x - 1500, G.cdg.y - 1500, 0.09);
-    renderPhases(); renderPhase(); renderMoyens(); renderMemento(); renderCrayons(); majHUD();
+    renderPhases(); renderPhase(); renderMoyens(); renderMemento(); renderTicket(); renderCrayons(); majHUD();
     API.carte = carte; AVIONS.init(API); DETRESSE.init();
     enCours = true; last = performance.now(); requestAnimationFrame(boucle);
   }
@@ -258,8 +259,8 @@
     if (arrive && u.etat === 'vers_pe') { u.etat = 'remplissage'; u.tRemp = G.t; }
     if (u.etat === 'remplissage') {
       const pe = G.pe[u.auPE], debit = pe ? pe.debit : 30;    // m3/h
-      const q = Math.min(u.cap - u.eau, debit * 1000 / 3600 * dt, pe && pe.gpf ? pe.gpf.eau : 1e9);
-      u.eau += q; if (pe && pe.gpf) { pe.gpf.eau -= q; if (pe.gpf.eau < 1000) { u.eau = Math.max(u.eau, u.cap - 1); radio(pe.gpf.ca, 'CDG Salles', `${pe.gpf.label} vide, je pars me remplir.`, 'DIR 654'); delete G.pe[u.auPE]; pe.gpf.mission = null; pe.gpf.eau = Math.max(0, pe.gpf.eau); gereEau(pe.gpf); } }
+      const q = Math.min(u.cap - u.eau, debit * 1000 / 3600 * dt, pe && pe.gpf ? pe.gpf.eau : 1e9, pe && pe.reserve ? pe.volume : 1e9);
+      u.eau += q; if (pe && pe.reserve) { pe.volume -= q; if (pe.volume <= 0) { radio(u.ca, 'CDG Salles', `Réserve ${pe.n} vide.`, 'DIR 654', 'alerte'); delete G.pe[pe.n]; u.eau = Math.max(u.eau, u.cap - 1); } } if (pe && pe.gpf) { pe.gpf.eau -= q; if (pe.gpf.eau < 1000) { u.eau = Math.max(u.eau, u.cap - 1); radio(pe.gpf.ca, 'CDG Salles', `${pe.gpf.label} vide, je pars me remplir.`, 'DIR 654'); delete G.pe[u.auPE]; pe.gpf.mission = null; pe.gpf.eau = Math.max(0, pe.gpf.eau); gereEau(pe.gpf); } }
       if (u.eau >= u.cap - 1) { u.etat = 'engage'; radio(u.ca, 'CDG Salles', `${u.label} plein, je réintègre ma mission.`, 'DIR 654'); u.path = null; if (u.retour) allerA(u, u.retour[0], u.retour[1]); }
       return;
     }
@@ -409,6 +410,7 @@
   // =============================================================== evenements, etat du feu
   function evenements() {
     // points d'eau en cours d'activation
+    for (const p of Object.values(G.pe)) if (!p.actif && G.t >= p.tActif && p.sec) { delete G.pe[p.n]; radio('Point Alpha', 'CDG Salles', `Point d'eau ${p.n} : niveau insuffisant, impossible d'amorcer. Point d'eau non pérenne, à sec.`, 'DIR 654', 'alerte'); evalue('rto', `Point d'eau ${p.n} non pérenne`, 'à sec à l\'activation', 'mi', 'Triangle à moitié bleu : point d\'eau non pérenne, prévoir une solution de repli.'); }
     for (const p of Object.values(G.pe)) if (!p.actif && G.t >= p.tActif) { p.actif = true; radio('Point Alpha', 'CDG Salles', `Point d'eau ${p.n} opérationnel (${p.moyen}, ${p.debit} m³/h).`, 'DIR 654'); }
     // renforts
     for (const d of G.demandes) if (!d.fait && G.t >= d.t) {
@@ -438,11 +440,23 @@
   }
 
   // =============================================================== radio, journal, evaluation
+  // actions reflexes relevees d'apres les messages et les ordres
+  function reflexe(k) { if (G.reflexes[k] == null && (G.tArrivee || G.cdgArrive)) { G.reflexes[k] = G.t; if (G.phase === 4) setPhase('reflexes'); } }
+  function detecteReflexes(txt, canal) {
+    const t = txt.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (canal === 'DIR 654') { if (!G.dir654) { G.dir654 = true; G.unites.filter(u => u.x != null && u.etat !== 'alerte').slice(0, 3).forEach(u => setTimeout(() => radio(u.ca, 'CDG Salles', 'Reçu 5 sur 5.', 'DIR 654'), 400)); } reflexe('radio'); }
+    if (/repli|cheminement|securite|3 ?p\b|autoprotection|zone refuge/.test(t)) reflexe('securite');
+    if (/observat|guetteur|charlie 33/.test(t)) reflexe('observation');
+    if (/gendarmerie|police|elus?\b|maire|enedis|rte\b|dfci/.test(t)) reflexe('autorites');
+    if (/protection|defense|defendez|evacu|confin/.test(t)) reflexe('sensibles');
+  }
   function radio(de, a, txt, canal, cls) {
+    if (de === 'CDG Salles') { detecteReflexes(txt, canal); if (window.DETRESSE && G.feu) DETRESSE.message(canal, txt); }
     if (de === 'CDG Salles' && canal === 'GRP 272') G.mesMsgs.push({ t: G.t, txt });
     G.radio.push({ t: G.t, de, a, txt, canal, cls: cls || (de === 'CDG Salles' ? 'moi' : '') });
     renderRadio(); const nb = $('#nb-radio'); if (nb && $('#o-radio').hidden) nb.textContent = '•';
     if (cls === 'alerte' || cls === 'codis') info(`${de} : ${txt}`);
+    if (de !== 'CDG Salles' && de !== 'COS ' + CARTE.commune(G.ix, G.iy)) { const b = document.querySelector(`.poste[data-poste="${canal}"]`); if (b && (cls === 'alerte' || canal === 'Canal 18' || cls === 'codis')) b.classList.add('appel'); }
   }
   function journal(txt) { G.radio.push({ t: G.t, de: 'Journal', a: '', txt, canal: 'journal', cls: '' }); renderRadio(); }
   function evalue(phase, item, detail, res, conseil) {
@@ -507,7 +521,7 @@
   PH.dpif = () => `
     <h2>DPIF</h2>
     <p class="aide">Départ pour intervention feu. Préparez votre départ avec le ticket et la carte, avant de quitter le CIS.</p>
-    <div class="ticket">${esc(G.radio[0].txt)}\nMétéo : vent ${G.vent} m/s (${Math.round(G.vent * 3.6)} km/h), venant du ${CARTE.rose(G.dir)} (${Math.round(G.dir)}°). Sécheresse ${G.sech}.</div>
+    <div class="ticket">${esc(G.radio[0].txt)}\nMétéo : vent ${G.vent} m/s (${Math.round(G.vent * 3.6)} km/h), de secteur ${CARTE.rose(G.dir)}. Sécheresse ${G.sech}.</div>
     <form class="form" id="f-dpif">
       <fieldset><legend>CGI</legend>
         <label>Coordonnées (carré DFCI) <input type="text" name="coord" value="${esc(G.ticket.coord)}"></label>
@@ -638,13 +652,23 @@
     };
   };
   // legende du cartoguide : rond = reserve ; moyen d'activation et perennite a completer (formateur)
-  function peLabel(p) { return `n° ${p.n} (${p.dfci})${p.forme === 'rond' ? ' réserve' : ''}${p.activation ? ' · ' + p.activation : ''}`; }
+  function peLabel(p) { return `n° ${p.n} (${p.dfci}) · ${CARTE.typePE(p).nom}`; }
   function activePE(n, moyen) {
-    const q = carte.points_eau.find(p => p.n === n); if (!q || G.pe[n]) return;
-    const debit = { MPF: 30, MPR: 55, MPRI: 55, MPRGP: 120 }[moyen] || 30;
-    G.pe[n] = { n, x: q.p[0], y: q.p[1], moyen, debit, actif: false, tActif: G.t + (moyen === 'MPF' ? 8 : 18) * 60, tDemande: G.t };
-    radio('CODIS 33', 'CDG Salles', `Reçu, activation du point d'eau ${n} (${moyen}) en cours.`, 'GRP 272', 'codis');
+    const q = carte.points_eau.find(p => p.n === n); if (!q) return;
+    const T = CARTE.typePE(q);
+    if (G.pe[n] && G.pe[n].reserve) { radio('CODIS 33', 'CDG Salles', `Le point d'eau ${n} est une réserve de 60 m³ : utilisable directement par aspiration, sans activation.`, 'GRP 272', 'codis'); evalue('messages', 'Activation d\'une réserve', `point d'eau ${n}`, 'mi', 'Les réserves de 60 m³ (rond bleu) ne s\'activent pas : on y aspire directement.'); return; }
+    if (G.pe[n]) return;
+    reflexe('eau');
+    if (T.moyen !== 'aspiration' && moyen && moyen !== T.moyen && !(T.moyen === 'MPR' && moyen === 'MPRI')) evalue('messages', `Moyen d'activation du point d'eau ${n}`, `${moyen} demandée (${T.nom})`, 'ko', 'Triangle : MPR ; losange (puits foré) : MPRI ; rond : réserve 60 m³ sans activation.');
+    const m = T.moyen === 'aspiration' ? 'MPF' : T.moyen, debit = { MPF: 30, MPR: 55, MPRI: 55, MPRGP: 120 }[m] || 30;
+    G.pe[n] = { n, x: q.p[0], y: q.p[1], moyen: m, debit, actif: false, tActif: G.t + (m === 'MPF' ? 8 : 18) * 60, tDemande: G.t };
+    if (T.incertain && G.R() < 0.5) G.pe[n].sec = true;    // point d'eau non perenne : peut etre a sec
+    radio('CODIS 33', 'CDG Salles', `Reçu, activation du point d'eau ${n} par une ${m} en cours.`, 'GRP 272', 'codis');
     G.dirtyFond = true;
+  }
+  // reserves de 60 m3 : disponibles d'emblee, volume limite
+  function initReserves() {
+    for (const q of carte.points_eau) if (q.forme === 'rond') G.pe[q.n] = { n: q.n, x: q.p[0], y: q.p[1], moyen: 'réserve 60 m³', debit: 60, actif: true, tActif: 0, reserve: true, volume: 60000 };
   }
   // ---------------- arrivee
   PH.arrivee = () => {
@@ -691,8 +715,7 @@
     <h2>${G.phase <= 4 ? 'Reconnaissance' : G.phase === 5 ? 'Actions réflexes' : G.phase === 6 ? 'Messages' : 'Raisonnement tactique'}</h2>
     <p class="aide">Déplacez votre VLCG (clic droit ou « Aller à » puis clic sur la carte) : vous voyez le feu à 300 m autour de vous et de vos engins. Feu ${esc(G.etatFeu)}.</p>
     <div class="btns"><button class="btn sec" id="b-aller">Aller à…</button><button class="btn sec" id="b-c33">Demander Charlie 33</button></div>
-    <h3>Actions réflexes (${nb}/${REFLEXES.length})</h3>
-    <div class="form">${REFLEXES.map(([k, t]) => `<label class="ligne"><input type="checkbox" data-refl="${k}" ${G.reflexes[k] ? 'checked disabled' : ''}> ${esc(t)}${G.reflexes[k] ? ` <small class="aide">${hm(G.heure0 + G.reflexes[k])}</small>` : ''}</label>`).join('')}</div>
+    ${G.niv.aides ? `<div class="note">Réflexes à l'arrivée (aide débutant) : passer sur la DIR 654 avec les chefs d'agrès, cheminement de repli, point d'engagement, points sensibles, point d'eau, dimensionnement, autorités, observation. Ils sont relevés d'après vos messages et vos ordres.</div>` : ''}
     <div class="btns"><button class="btn sec" id="b-pteng">Désigner le point d'engagement sur la carte</button></div>
     <h3>Messages au CODIS</h3>
     <div class="btns">
@@ -709,11 +732,6 @@
     $('#b-aller').onclick = () => { G.outil = 'aller'; cvD.classList.add('crayon'); info('Cliquez la destination de votre VLCG.'); };
     $('#b-c33').onclick = () => { if (G.c33 != null) return; G.c33 = G.t; radio('CDG Salles', 'CODIS 33', 'Je demande l\'engagement de Charlie 33 pour reconnaissance.', 'GRP 272'); setTimeout(() => {}, 0); G.tC33 = G.t + 20 * 60; G.c33 = null; G.c33Prevu = true; };
     $('#b-pteng').onclick = () => { G.outil = 'engagement'; cvD.classList.add('crayon'); info('Cliquez le point d\'engagement des moyens.'); };
-    $$('[data-refl]').forEach(c => c.onchange = () => {
-      const k = c.dataset.refl; G.reflexes[k] = G.t; c.disabled = true;
-      if (k === 'radio') { G.dir654 = true; radio('CDG Salles', 'Chefs d\'agrès', 'De CDG Salles, je prends le COS, basculez sur la DIR 654, contrôle radio.', 'DIR 654'); G.unites.filter(u => u.x != null).forEach(u => radio(u.ca, 'CDG Salles', 'Reçu 5 sur 5.', 'DIR 654')); }
-      if (G.phase < 5) setPhase('reflexes'); else renderPhase();
-    });
     $$('[data-msg]').forEach(b => b.onclick = () => { $('#zone-msg').innerHTML = FORM[b.dataset.msg](); FORM[b.dataset.msg + '_bind'](); bindCalc($('#zone-msg')); });
     if (G.dernierRetour) { $('#zone-msg').innerHTML = G.dernierRetour; G.dernierRetour = null; }
     $('#b-fin').onclick = () => termine();
@@ -755,6 +773,7 @@
       evalue('messages', 'Ambiance : point d\'eau', peDem ? `n° ${peDem} au moyen d'une ${f.get('moyen')}` : 'non demandé', peDem ? (nDem > 3 && f.get('moyen') === 'MPF' ? 'mi' : 'ok') : 'ko', 'Mémento : jusqu\'à 3 UIFF une MPF ; au-delà une MPR ou MPRI.');
       radio('CDG Salles', 'CODIS 33', `Message d'ambiance. Feu de ${f.get('cat')}, ${ha} ha, front de ${fr} m. Situation ${(f.get('sit') || '').toLowerCase()}. ${f.getAll('diff').join(', ')}. Surface menacée : ${f.get('menace') || '—'}. Le feu nécessite ${nDem} UIFF sur les lieux${f.getAll('autres').length ? ' et ' + f.getAll('autres').join(', ') : ''}. ${f.getAll('aut').length ? 'Je demande ' + f.getAll('aut').join(', ') + '. ' : ''}Point d'engagement : ${f.get('pteng')}. ${peDem ? `Je demande l'activation du point d'eau ${peDem} au moyen d'une ${f.get('moyen')}.` : ''}`, 'GRP 272');
       G.msgs.ambiance = { t: G.t }; G.tDernierMsg = G.t;
+      if (nDem) reflexe('moyens'); if (peDem) reflexe('eau'); if (f.getAll('aut').length) reflexe('autorites');
       const manquant = nDem - nbUIFF();
       if (manquant > 0) G.demandes.push({ n: manquant, t: G.t + 4 * 60 });
       if (peDem) activePE(+peDem, f.get('moyen'));
@@ -849,7 +868,7 @@
       </div>`).join('')}
       ${AVIONS.panneau()}
       <h3>Points d'eau activés</h3>
-      <p class="aide">${Object.values(G.pe).map(p => `n° ${p.n} (${p.moyen}) : ${p.actif ? 'opérationnel' : 'en cours, ' + hm(G.heure0 + p.tActif)}`).join('<br>') || 'aucun'}</p>
+      <p class="aide">${Object.values(G.pe).filter(p => !p.reserve).map(p => `n° ${p.n} (${p.moyen}) : ${p.actif ? 'opérationnel' : 'en cours, ' + hm(G.heure0 + p.tActif)}`).join('<br>') || 'aucun'}<br>Réserves 60 m³ (sans activation) : ${Object.values(G.pe).filter(p => p.reserve).map(p => `n° ${p.n} (${Math.round(p.volume / 1000)} m³)`).join(', ') || 'aucune'}</p>
       <div class="btns"><select id="pe-sel">${carte.points_eau.map(p => `<option value="${p.n}">${peLabel(p)}</option>`).join('')}</select><select id="pe-moy">${opt(['MPF', 'MPR', 'MPRI', 'MPRGP'])}</select><button class="btn sec" id="b-pe">Demander l'activation</button></div>`;
     $$('#o-moyens [data-ordre]').forEach(b => b.onclick = () => ordre(G.unites.find(u => u.id === b.dataset.u), b.dataset.ordre));
     $$('#o-moyens .unite[data-u]').forEach(d => d.onclick = e => { if (e.target.tagName !== 'BUTTON') { G.sel = d.dataset.u; const u = G.unites.find(x => x.id === G.sel); if (u.x != null) vue.centre(u.x, u.y); G.dirtyFond = true; renderMoyens(); } });
@@ -908,6 +927,13 @@
     r.onend = () => { btn.classList.remove('emet'); ecoute = null; };
     ecoute = r; r.start();
   }
+  // dictee simple (air-sol)
+  function dicte(cb) {
+    if (!Reco) { info('Reconnaissance vocale non disponible : utilisez Chrome ou Edge, ou écrivez.'); return; }
+    const r = new Reco(); r.lang = 'fr-FR'; r.interimResults = true; let fin = '';
+    r.onresult = e => { let tmp = ''; for (let i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) fin += e.results[i][0].transcript + ' '; else tmp += e.results[i][0].transcript; } cb((fin + tmp).trim()); };
+    r.start();
+  }
   function ctxParole() { return { communes: carte.communes.map(c => c.n), lieux: carte.lieux.map(l => l.n), categories: CATS }; }
   // champ de formulaire simule a partir du message analyse
   function pseudoForm(o) { return { get: k => (o[k] == null ? '' : Array.isArray(o[k]) ? o[k][0] : o[k]), getAll: k => (o[k] == null ? [] : Array.isArray(o[k]) ? o[k] : [o[k]]) }; }
@@ -953,9 +979,18 @@
     $$('[data-fond]').forEach(b => b.onclick = () => { vue.fond = b.dataset.fond; $$('[data-fond]').forEach(x => x.setAttribute('aria-pressed', x === b)); G.dirtyFond = true; renderLegende(); });
     $$('[data-onglet]').forEach(b => b.onclick = () => { $$('[data-onglet]').forEach(x => x.setAttribute('aria-selected', x === b)); $$('.contenu').forEach(c => c.hidden = c.id !== 'o-' + b.dataset.onglet); if (b.dataset.onglet === 'radio') $('#nb-radio').textContent = ''; if (b.dataset.onglet === 'moyens') renderMoyens(); });
     $$('[data-outil]').forEach(b => b.onclick = () => { const o = b.dataset.outil; G.outil = G.outil === o ? null : o; G.crayon = null; renderCrayons(); $$('[data-outil]').forEach(x => x.setAttribute('aria-pressed', x.dataset.outil === G.outil)); cvD.classList.toggle('crayon', !!G.outil); G.mesure = null; });
-    $('#b-feu').onclick = () => { const b = G.bilan || F.bilan(); const e = b.emprise; vue.centre((e[0] + e[2]) / 2 || G.ix, (e[1] + e[3]) / 2 || G.iy, Math.max(vue.s, 0.35)); G.dirtyFond = true; };
-    $$('.poste[data-poste]').forEach(b => b.onclick = () => parler(b.dataset.poste, b));
-    $('#b-libre').onclick = () => ouvreParole('GRP 272', '');
+    $('#b-feu').onclick = () => { if (!G.fumeeVue) { info('La fumée n\'est pas encore en vue : rapprochez-vous du lieu indiqué par le ticket.'); return; } const b = G.bilan || F.bilan(); const e = b.emprise; vue.centre((e[0] + e[2]) / 2 || G.ix, (e[1] + e[3]) / 2 || G.iy, Math.max(vue.s, 0.35)); G.dirtyFond = true; };
+    $$('.poste[data-poste]').forEach(b => b.onclick = () => {
+      b.classList.remove('appel');
+      if (b.dataset.poste === 'Canal 18') { AVIONS.ouvreChat(); return; }
+      if (b.dataset.poste === 'DIR 654' && DETRESSE.actif()) DETRESSE.vu();
+      parler(b.dataset.poste, b);
+    });
+    $('#b-libre').onclick = () => { if (ecoute) ecoute.stop(); $('#parole-txt').focus(); };
+    let couleurNote = '#111111';
+    $$('[data-bc]').forEach(b => b.onmousedown = e => { e.preventDefault(); couleurNote = b.dataset.bc; $$('[data-bc]').forEach(x => x.setAttribute('aria-pressed', x === b)); $('#notes').focus(); document.execCommand('styleWithCSS', false, true); document.execCommand('foreColor', false, couleurNote); });
+    $('#notes').addEventListener('focus', () => { document.execCommand('styleWithCSS', false, true); document.execCommand('foreColor', false, couleurNote); });
+    $('#b-ticket').onclick = () => $('[data-onglet="ticket"]').click();
     $('#parole-ok').onclick = transmetLibre;
     $('#parole-x').onclick = () => { if (ecoute) ecoute.stop(); $('#parole').hidden = true; };
     $('#b-regle').onclick = () => {
@@ -1002,7 +1037,7 @@
     const o = G.outil;
     if (o === 'point') { G.ptAtteindre = [x, y]; const r = CARTE.route(G.cdg.x, G.cdg.y, x, y); $('#pt-txt').textContent = `${CARTE.dfci(x, y)} · ${CARTE.lieuDit(x, y)}`; $('#itin').value = r ? `${(r.L / 1000).toFixed(1)} km par routes et pistes, environ ${Math.round(r.t / 60)} min` : 'pas d\'itinéraire'; G.itin = r; finOutil(); return; }
     if (o === 'aller') { allerCDG(x, y); finOutil(); return; }
-    if (o === 'engagement') { G.ptEngagement = [x, y]; G.reflexes.engagement = G.reflexes.engagement || G.t; radio('CDG Salles', 'Chefs d\'agrès', `Point d'engagement des moyens : ${CARTE.dfci(x, y)}, ${CARTE.lieuDit(x, y)}.`, G.dir654 ? 'DIR 654' : 'GRP 272'); for (const u of G.unites) if (u.etat === 'transit') allerA(u, x, y); finOutil(); renderPhase(); return; }
+    if (o === 'engagement') { G.ptEngagement = [x, y]; reflexe('engagement'); radio('CDG Salles', 'Chefs d\'agrès', `Point d'engagement des moyens : ${CARTE.dfci(x, y)}, ${CARTE.lieuDit(x, y)}.`, G.dir654 ? 'DIR 654' : 'GRP 272'); for (const u of G.unites) if (u.etat === 'transit') allerA(u, x, y); finOutil(); renderPhase(); return; }
     const u = G.unites.find(u => u.id === G.sel);
     if (o === 'allerU' && u) { allerA(u, x, y, true); u.etat = u.mission ? 'engage' : 'transit'; finOutil(); return; }
     if (o === 'alpha' && u) {
@@ -1022,7 +1057,7 @@
       if (G.bandeEnCours.length === 2) { u.bande = G.bandeEnCours; u.av = 0; u.mission = 'bande'; u.etat = 'engage'; allerA(u, u.bande[0][0], u.bande[0][1], true); radio('CDG Salles', u.ca, `${u.label}, bande de ${Math.round(Math.hypot(u.bande[1][0] - u.bande[0][0], u.bande[1][1] - u.bande[0][1]))} m.`, 'DIR 654'); G.bandeEnCours = null; finOutil(); renderMoyens(); }
       return;
     }
-    if (o === 'defense' && u) { u.mission = 'defense'; u.cible = [x, y]; u.etat = 'engage'; allerA(u, x, y, true); radio('CDG Salles', u.ca, `${u.label}, défense du point sensible ${CARTE.lieuDit(x, y)}.`, 'DIR 654'); finOutil(); renderMoyens(); return; }
+    if (o === 'defense' && u) { reflexe('sensibles'); u.mission = 'defense'; u.cible = [x, y]; u.etat = 'engage'; allerA(u, x, y, true); radio('CDG Salles', u.ca, `${u.label}, défense du point sensible ${CARTE.lieuDit(x, y)}.`, 'DIR 654'); finOutil(); renderMoyens(); return; }
     if (o === 'ligne') {
       G.ligneEnCours.pts.push([x, y]);
       if (G.ligneEnCours.pts.length === 2) {
@@ -1037,14 +1072,18 @@
       }
       return;
     }
+    if (o === 'numero') {
+      const n = G.crayonPrec || 6, k = G.dessins.filter(d => d.num && d.n === n).length + 1;
+      G.dessins.push({ n, num: k, pts: [[x, y]] }); if (G.phase === 1) renderPhase(); return;
+    }
     if (o === 'texte') {
       const r = cvD.getBoundingClientRect(), inp = $('#saisie');
       G.posTexte = [x, y]; G.crayonTexte = G.crayonPrec || 4;
       inp.style.left = (vue.sx(x)) + 'px'; inp.style.top = (vue.sy(y) - 14) + 'px'; inp.hidden = false; inp.focus(); return;
     }
     if (o === 'largage') { if (AVIONS.clic(x, y)) finOutil(); return; }
-    if (o === 'largage2') { AVIONS.clic2(x, y); return; }
-    if (o === 'mesure') { if (!G.mesure || G.mesure.length === 2) G.mesure = [[x, y]]; else { G.mesure.push([x, y]); const [a, b] = G.mesure; info(`Distance : ${Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]))} m, cap ${Math.round(CARTE.cap(b[0] - a[0], b[1] - a[1]))}°.`); } return; }
+
+    if (o === 'mesure') { if (!G.mesure || G.mesure.length === 2) G.mesure = [[x, y]]; else { G.mesure.push([x, y]); const [a, b] = G.mesure; info(`Distance : ${Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]))} m, direction ${CARTE.rose(CARTE.cap(b[0] - a[0], b[1] - a[1]))}.`); } return; }
     if (o === 'gomme') { let bi = -1, bd = 40 / vue.s; G.dessins.forEach((d, i) => d.pts.forEach(p => { const dd = Math.hypot(p[0] - x, p[1] - y); if (dd < bd) { bd = dd; bi = i; } })); if (bi >= 0) G.dessins.splice(bi, 1); return; }
   }
   function finOutil() { G.outil = null; cvD.classList.remove('crayon'); $$('[data-outil]').forEach(x => x.setAttribute('aria-pressed', false)); G.dirtyFond = true; }
@@ -1057,21 +1096,20 @@
     if (!el.dataset.fait) {
       el.dataset.fait = '1';
       el.innerHTML = `<b>Règle feu de forêt</b> <span class="aide">déplacez par le centre, orientez par la pastille rouge</span>
-        <label>Vent du (°) <input type="number" id="rg-vent"></label>
-        <label>Propagation (°) <input type="number" id="rg-az"></label>
+        <label>Vent du <select id="rg-vent">${['nord', 'nord-est', 'est', 'sud-est', 'sud', 'sud-ouest', 'ouest', 'nord-ouest'].map((d, i) => `<option value="${i * 45}">${d}</option>`).join('')}</select></label>
+        <label>Propagation vers <b id="rg-az"></b></label>
         <label>Vitesse (m/h) <input type="number" id="rg-v"></label>
         <label>Demi-angle du cône (°) <input type="number" id="rg-cone"></label>
         <label>Grille 1 ha <input type="checkbox" id="rg-g" checked style="width:auto"></label>
         <div id="rg-info"></div><div id="rg-tab"></div>`;
-      $('#rg-vent').oninput = e => { REGLE.az = ((+e.target.value || 0) + 180) % 360; renderRegle(); };
-      $('#rg-az').oninput = e => { REGLE.az = (+e.target.value || 0) % 360; renderRegle(); };
+      $('#rg-vent').onchange = e => { REGLE.az = ((+e.target.value || 0) + 180) % 360; renderRegle(); };
       $('#rg-v').oninput = e => { REGLE.v = +e.target.value || 0; renderRegle(); };
       $('#rg-cone').oninput = e => { REGLE.cone = clamp(+e.target.value || 20, 5, 60); renderRegle(); };
       $('#rg-g').onchange = e => { REGLE.grille = e.target.checked; };
       $('#rg-tab').innerHTML = REGLE.tableau();
     }
     const set = (id, v) => { const i = $(id); if (document.activeElement !== i) i.value = v; };
-    set('#rg-vent', Math.round((REGLE.az + 180) % 360)); set('#rg-az', Math.round(REGLE.az)); set('#rg-v', REGLE.v); set('#rg-cone', REGLE.cone);
+    set('#rg-vent', (Math.round((REGLE.az + 180) % 360 / 45) % 8) * 45); $('#rg-az').textContent = 'le ' + CARTE.rose(REGLE.az); set('#rg-v', REGLE.v); set('#rg-cone', REGLE.cone);
     const P = REGLE.v, FF = P / 3;
     $('#rg-info').innerHTML = `Centre : <b>${REGLE.coord(REGLE.x, REGLE.y)}</b><br>En 1 h : profondeur ${Math.round(P)} m, front ≈ ${Math.round(FF)} m, surface ≈ ${(P * FF / 2 / 10000).toFixed(1)} ha`;
   }
@@ -1110,7 +1148,8 @@
     // panache de fumee (toujours visible)
     const b = G.bilan;
     const fx = b && b.actifs.length ? (b.emprise[0] + b.emprise[2]) / 2 : G.ix, fy = b && b.actifs.length ? (b.emprise[1] + b.emprise[3]) / 2 : G.iy;
-    if (G.etatFeu !== 'maîtrisé') {
+    if (!G.fumeeVue && (G.tArrivee || Math.hypot(G.cdg.x - fx, G.cdg.y - fy) < 3000)) G.fumeeVue = true;
+    if (G.etatFeu !== 'maîtrisé' && G.fumeeVue) {
       const L = 900 + G.vent * 250, w0 = 40, w1 = 300 + G.vent * 40;
       for (let k = 0; k < 14; k++) {
         const t = k / 13, x = fx + F.wx * L * t, y = fy + F.wy * L * t, r = (w0 + (w1 - w0) * t) * s;
@@ -1121,6 +1160,7 @@
     AVIONS.dessine(ctx, vue);
     // dessins ZI
     for (const d of G.dessins) {
+      if (d.num) { const c = CRAYONS[d.n - 1].c, X = sx(d.pts[0][0]), Y = sy(d.pts[0][1]); ctx.fillStyle = '#fff'; ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(X, Y, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.fillStyle = c; ctx.font = '700 12px "IBM Plex Sans"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(d.num, X, Y + 1); ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic'; continue; }
       if (d.texte) { const c = CRAYONS[d.n - 1].c; ctx.font = '700 14px "IBM Plex Sans"'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.strokeText(d.texte, sx(d.pts[0][0]), sy(d.pts[0][1])); ctx.fillStyle = c; ctx.fillText(d.texte, sx(d.pts[0][0]), sy(d.pts[0][1])); continue; }
       const c = CRAYONS[d.n - 1].c; ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.beginPath(); d.pts.forEach((p, i) => i ? ctx.lineTo(sx(p[0]), sy(p[1])) : ctx.moveTo(sx(p[0]), sy(p[1]))); if (d.ferme) { ctx.closePath(); ctx.fillStyle = c + '22'; ctx.fill(); } ctx.stroke();
@@ -1129,7 +1169,7 @@
     // lignes d'appui
     for (const L of G.lignes) { ctx.strokeStyle = '#1d4ed8'; ctx.lineWidth = 6; ctx.setLineDash([10, 6]); ctx.beginPath(); ctx.moveTo(sx(L.pts[0][0]), sy(L.pts[0][1])); ctx.lineTo(sx(L.pts[1][0]), sy(L.pts[1][1])); ctx.stroke(); ctx.setLineDash([]); }
     // points d'eau actives
-    for (const p of Object.values(G.pe)) { const q = p.mobile ? { n: 'GPF', forme: 'rond', p: [p.x, p.y], perenne: true } : carte.points_eau.find(z => z.n === p.n); if (!q) continue; CARTE.symbolePE(ctx, sx(q.p[0]), sy(q.p[1]), q, 1.3, true); ctx.fillStyle = '#1d4ed8'; ctx.font = '700 11px "IBM Plex Sans"'; ctx.fillText(p.actif ? p.moyen : p.moyen + ' …', sx(q.p[0]) + 16, sy(q.p[1]) - 14); }
+    for (const p of Object.values(G.pe)) { if (p.reserve) continue; const q = p.mobile ? { n: 'GPF', forme: 'rond', p: [p.x, p.y], perenne: true } : carte.points_eau.find(z => z.n === p.n); if (!q) continue; CARTE.symbolePE(ctx, sx(q.p[0]), sy(q.p[1]), q, 1.3, true); ctx.fillStyle = '#1d4ed8'; ctx.font = '700 11px "IBM Plex Sans"'; ctx.fillText(p.actif ? p.moyen : p.moyen + ' …', sx(q.p[0]) + 16, sy(q.p[1]) - 14); }
     // point a atteindre, point d'engagement
     if (G.ptAtteindre) marqueur(ctx, sx(G.ptAtteindre[0]), sy(G.ptAtteindre[1]), '#9a72ff', 'PA');
     if (G.ptEngagement && G.ptEngagement !== G.ptAtteindre) marqueur(ctx, sx(G.ptEngagement[0]), sy(G.ptEngagement[1]), '#16a34a', 'PE');
@@ -1173,6 +1213,20 @@
     $$('#filtres button').forEach(b => b.onclick = () => { filtre = b.dataset.f; renderRadio(); });
     $('#radio').innerHTML = G.radio.filter(r => filtre === 'tous' || r.canal === filtre || (filtre === 'mes messages' && r.de === 'CDG Salles')).slice().reverse().map(r => `<li class="${r.cls}"><small>${hm(G.heure0 + r.t)} · ${esc(r.canal)} · ${esc(r.de)}${r.a ? ' → ' + esc(r.a) : ''}</small>${esc(r.txt)}</li>`).join('');
   }
+  function renderTicket() {
+    const t = G.ticket;
+    $('#o-ticket').innerHTML = `<h2>Ticket de départ</h2>
+      <div class="ticket">BIP ${hm(G.heure0)} — DÉPART FEU DE FORÊT
+Commune : ${esc(t.commune)}
+Lieu-dit : ${esc(t.ld)}
+Coordonnées DFCI : ${esc(t.coord)} (${CARTE.dfciPhon(t.coord)})
+Source : ${esc(t.source)}
+Départ : CDG Salles, ${G.unites.slice(0, 2).map(u => esc(u.label)).join(', ')}
+Météo : vent ${G.vent} m/s (${Math.round(G.vent * 3.6)} km/h) de secteur ${CARTE.rose(G.dir)}
+Sécheresse : ${G.sech}
+Transmissions : GRP 272 (CODIS), DIR 654 (chefs d'agrès), canal 18 (air-sol)</div>
+      <p class="aide">Niveau ${G.niv.nom}.</p>`;
+  }
   function renderMemento() {
     $('#o-memento').innerHTML = `<div class="mem"><h2>Mémento FDF</h2>
       <h3>Bases de dimensionnement</h3>
@@ -1212,7 +1266,7 @@
   const API = {
     G, carte: null, F: () => F, radio: (...a) => radio(...a), evalue: (...a) => evalue(...a), info: t => info(t),
     outil: (o, msg) => { G.outil = o; cvD.classList.add('crayon'); info(msg); }, finOutil: () => finOutil(),
-    allerA: (...a) => allerA(...a), dfci: (x, y) => CARTE.dfci(x, y), cap: (dx, dy) => CARTE.cap(dx, dy), hm: t => hm(G.heure0 + t),
+    allerA: (...a) => allerA(...a), dicte: cb => dicte(cb), dfci: (x, y) => CARTE.dfci(x, y), cap: (dx, dy) => CARTE.cap(dx, dy), hm: t => hm(G.heure0 + t),
     commune: () => CARTE.commune(G.ix, G.iy),
     obstaclesProches: r => {
       const out = [], b = G.bilan || F.bilan(), cx = b.actifs.length ? (b.emprise[0] + b.emprise[2]) / 2 : G.ix, cy = b.actifs.length ? (b.emprise[1] + b.emprise[3]) / 2 : G.iy;
