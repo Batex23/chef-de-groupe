@@ -46,7 +46,7 @@
         a.etat = 'approche';
         pilote(a, `COS ${A.commune()} de ${a.id}, ${a.type}, ${TYPES[a.type].cap}, à 5 minutes de votre zone, j'écoute.`);
       }
-      if (a.etat === 'approche' && G.t >= a.tArrivee) { a.etat = 'zone'; a.tFin = G.t + TYPES[a.type].autonomie * 60; if (!a.ordre) pilote(a, `${a.id} sur zone, en orbite, j'attends vos consignes.`); }
+      if (a.etat === 'approche' && G.t >= a.tArrivee) { a.etat = 'zone'; a.tFin = G.t + TYPES[a.type].autonomie * 60; if (!a.ordre) pilote(a, AV.pecFaite ? `${a.id} sur zone, j'ai les obstacles de mon leader. Même objectif ou nouvel objectif ?` : `${a.id} sur zone, en orbite, j'attends vos consignes.`); }
       if (a.etat === 'zone' && a.ordre && G.t >= a.ordre.t) largue(a);
       if (a.etat === 'rotation' && G.t >= a.tRetour) { a.etat = 'zone'; pilote(a, `${a.id} de retour sur zone, j'attends un objectif.`); }
       if ((a.etat === 'zone' || a.etat === 'rotation') && a.tFin && G.t > a.tFin) { a.etat = 'parti'; pilote(a, `${a.id} en limite d'autonomie, je quitte la zone.`); }
@@ -110,56 +110,103 @@
   }
   function distSeg(p, a, b) { const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L)); return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy); }
 
-  function cos(txt) {
-    const G = A.G, t = norm(txt), P = AV.points, rep = [];
-    AV.chat.push({ de: 'COS ' + A.commune(), txt, t: G.t }); A.radio('COS ' + A.commune(), 'Air-sol', txt, 'Canal 18');
-    const a = AV.avions.find(x => x.etat === 'zone' && !x.ordre) || AV.avions.find(x => x.etat === 'zone' || x.etat === 'approche') || AV.avions[0];
-    const nouveau = k => { if (P[k] == null) P[k] = G.t; };
-    if (/bonjour|salut/.test(t)) { nouveau('p1'); rep.push('Bonjour COS.'); }
-    if (/delegu|adjoint|je confie|veille (le )?codis/.test(t)) { nouveau('p2'); rep.push('Reçu pour votre adjoint.'); }
-    // position du COS : orientation + distance par rapport au feu
+  // ------------------------------------------------------------- pilote a regles : prise en compte du POMAR
+  const ORDRE_PTS = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9', 'p10'];
+  const RELANCE = {
+    p2: 'Vous avez un adjoint sur le chantier ?', p3: 'Donnez-moi votre position.', p5: 'Des obstacles sur zone ?',
+    p6: 'Quelle est la situation ?', p7: 'Quel objectif et quelle mission ?', p8: 'J\'attends « personnel en sécurité, autorisation de largage ».',
+  };
+  const pris = () => ['Pris en compte', 'Reçu, pris en compte', 'Bien reçu'][Math.floor(A.G.R() * 3)];
+  function avionVise(t) {
+    const m = t.match(/(pelican|milan) ?(\d+)/);
+    if (m) { const a = AV.avions.find(x => norm(x.id).replace(/\s+/g, ' ') === `${m[1]} ${m[2]}`); if (a) return a; }
+    return AV.avions.find(x => x.etat === 'zone' && !x.ordre) || AV.avions.find(x => x.etat === 'zone' || x.etat === 'approche') || AV.avions.find(x => x.etat === 'rotation') || AV.avions[0];
+  }
+  // position du COS : orientation + distance, carre DFCI, ou lieu-dit
+  function lirePosition(t) {
+    const G = A.G;
+    const vrai = A.cap(G.cdg.x - G.ix, G.cdg.y - G.iy), dv = Math.hypot(G.cdg.x - G.ix, G.cdg.y - G.iy), dirVraie = DIRS[Math.round(vrai / 45) % 8];
     const dirM = DIRS.slice().sort((x, y) => y.length - x.length).find(x => new RegExp(`\\b${x.replace('-', '[- ]')}\\b`).test(t));
     const distM = t.match(/(\d+(?:[.,]\d+)?) ?(m|metres?|km|kilometres?)\b/);
-    if (dirM && distM && /(je suis|suis|position|cos|me trouve|situe|nous sommes)/.test(t)) {
-      nouveau('p3'); const dist = parseFloat(distM[1].replace(',', '.')) * (/^k/.test(distM[2]) ? 1000 : 1);
-      const vrai = A.cap(G.cdg.x - G.ix, G.cdg.y - G.iy), dv = Math.hypot(G.cdg.x - G.ix, G.cdg.y - G.iy), dirVraie = DIRS[Math.round(vrai / 45) % 8];
-      const i0 = DIRS.indexOf(dirVraie), ok = [dirVraie, DIRS[(i0 + 1) % 8], DIRS[(i0 + 7) % 8]].includes(dirM);
-      AV.evPos = { dit: `${dirM}, ${Math.round(dist)} m`, vrai: `${dirVraie}, ${Math.round(dv)} m de l'origine`, ok: ok && Math.abs(dist - dv) < Math.max(250, dv * 0.4) };
-      rep.push(AV.evPos.ok ? 'Reçu, je vous ai en visuel.' : 'Reçu pour votre position… je ne vous vois pas, confirmez.');
+    if (dirM && distM) {
+      const dist = parseFloat(distM[1].replace(',', '.')) * (/^k/.test(distM[2]) ? 1000 : 1), i0 = DIRS.indexOf(dirVraie);
+      const ok = [dirVraie, DIRS[(i0 + 1) % 8], DIRS[(i0 + 7) % 8]].includes(dirM) && Math.abs(dist - dv) < Math.max(250, dv * 0.4);
+      return { dit: `${dirM} du feu, ${Math.round(dist)} m`, vrai: `${dirVraie}, ${Math.round(dv)} m de l'origine`, ok };
     }
-    if (/guid/.test(t)) { nouveau('p4'); rep.push('Reçu pour le guidage.'); }
-    if (/obstacle|ligne|pylone|relais|antenne|eolienne|cable/.test(t)) {
+    const car = t.match(/\b([a-z]{2}) ?(\d{3})\b/);
+    if (car && /suis|position|trouve|sommes/.test(t)) { const c = (car[1] + ' ' + car[2]).toUpperCase(), vr = A.dfci(G.cdg.x, G.cdg.y); return { dit: `carré ${c}`, vrai: `carré ${vr}`, ok: c === vr }; }
+    for (const l of A.carte.lieux) { const n = norm(l.n); if (n.length > 4 && t.includes(n) && /suis|position|trouve|sommes/.test(t)) { const d = Math.hypot(l.p[0] - G.cdg.x, l.p[1] - G.cdg.y); return { dit: `lieu-dit ${l.n}`, vrai: `à ${Math.round(d)} m de ${l.n}`, ok: d < 700 }; } }
+    return null;
+  }
+  function cos(txt) {
+    const G = A.G, t = norm(txt), P = AV.points, rep = [], niv = G.nivK;
+    AV.chat.push({ de: 'COS ' + A.commune(), txt, t: G.t }); A.radio('COS ' + A.commune(), 'Air-sol', txt, 'Canal 18');
+    const a = avionVise(t);
+    const nouveau = k => { if (P[k] == null) P[k] = G.t; };
+    let compris = false;
+    if (/repete|repetez|pas compris/.test(t) && AV.dernier) { pilote(a, AV.dernier); return; }
+    if (/annul|stop|arret(ez)? (le )?largage|ne larguez pas|interdi/.test(t)) {
+      const vis = AV.avions.filter(x => x.ordre); vis.forEach(x => { x.ordre = null; });
+      return dit(a, vis.length ? 'Largage annulé, pris en compte. Je reste en orbite, j\'attends vos consignes.' : 'Pris en compte, aucun largage programmé.');
+    }
+    if (/fin de mission|liberez|vous pouvez rentrer|vous etes libere/.test(t)) { AV.avions.filter(x => x.etat !== 'parti').forEach(x => { x.etat = 'parti'; x.ordre = null; }); return dit(a, 'Pris en compte, fin de mission, je quitte la zone. Bon courage au sol.'); }
+    if (/bonjour|salut|de cos/.test(t)) { nouveau('p1'); rep.push('Bonjour COS'); compris = true; }
+    if (/delegu|adjoint|je confie|veille (le )?codis|mon second/.test(t)) { nouveau('p2'); rep.push('adjoint pris en compte'); compris = true; }
+    const pos = lirePosition(t.replace(/\b(de |du )?cos [a-z-]+( [a-z-]+)?/g, ' ').replace(/^\s*\w+( \d+)? de\b/, ' '));
+    if (pos) { nouveau('p3'); AV.evPos = pos; rep.push(pos.ok ? 'position prise en compte, je vous ai en visuel' : 'position prise en compte… je ne vous vois pas, confirmez votre position'); compris = true; }
+    if (/guid/.test(t)) { nouveau('p4'); rep.push('guidage pris en compte'); compris = true; }
+    if (/obstacle|ligne|pylone|relais|antenne|eolienne|cable|neant|r ?a ?s\b|rien a signaler/.test(t) && !/ligne d appui/.test(t)) {
       nouveau('p5'); AV.obsDits = AV.obsDits || [];
       for (const o of A.obstaclesProches(2500)) if ((/ligne|haute tension|\bht\b|hta|kv/.test(t) && /ligne/i.test(o.n)) || (/relais|antenne|pylone/.test(t) && /relais/i.test(o.n))) if (!AV.obsDits.includes(o.n)) AV.obsDits.push(o.n);
-      rep.push(/pas d obstacle|aucun obstacle|rien a signaler/.test(t) ? 'Reçu, pas d\'obstacle.' : 'Reçu pour les obstacles.');
+      const rien = /pas d obstacle|aucun obstacle|neant|rien a signaler|\br ?a ?s\b/.test(t);
+      AV.obsRien = rien;
+      rep.push(rien ? 'pas d\'obstacle, pris en compte' : 'obstacles pris en compte' + (AV.obsDits.length ? ', je les ai en visuel' : ''));
+      compris = true;
     }
-    if (/vent|hectare|\bha\b|front|propag|uiff|engins|moyens engages|feu de/.test(t)) { nouveau('p6'); rep.push('Reçu pour la situation.'); }
-    if (/tete|flanc|origine|milieu|queue/.test(t)) {
-      let obj = objectifDepuisTexte(t, a);
+    if (/vent|hectare|\bha\b|propag|uiff|engins|moyens|feu de|situation/.test(t) && !/tete|flanc|origine/.test(t)) { nouveau('p6'); rep.push('situation prise en compte'); compris = true; }
+    if (/tete|flanc|origine|milieu|queue|\bavg\b|\bavd\b/.test(t)) {
+      let obj = objectifDepuisTexte(t.replace(/\bavg\b/, 'tete gauche').replace(/\bavd\b/, 'tete droit'), a);
       if (AV.ligneCarte) { obj = Object.assign(obj || { obj: 'zone désignée' }, { p: AV.ligneCarte[0], q: AV.ligneCarte[1] }); AV.ligneCarte = null; }
-      if (obj) { nouveau('p7'); const mission = /appui|barriere|retardant/.test(t) ? 'ligne d\'appui au retardant' : /attaque/.test(t) ? 'attaque directe' : a && TYPES[a.type].retardant ? 'ligne d\'appui au retardant' : 'attaque directe'; obj.mission = mission; AV.objectif = obj; rep.push(`Reçu, objectif ${obj.obj}, mission ${mission}.`); }
-      else rep.push('Je ne vois pas de feu actif, précisez l\'objectif.');
-    }
-    if (/silence radio/.test(t)) { nouveau('p9'); rep.push('Reçu.'); }
-    if (/rotation|autonomie|retour|combien de temps/.test(t)) { nouveau('p10'); if (a) rep.push(`Rotation ${TYPES[a.type].rotation} minutes, autonomie ${Math.round(TYPES[a.type].autonomie / 6) / 10} heures.`); }
+      if (obj) {
+        nouveau('p7');
+        const mission = /appui|barriere|retardant/.test(t) ? 'ligne d\'appui au retardant' : /attaque|noy|eteindre|directe/.test(t) ? 'attaque directe' : a && TYPES[a.type].retardant ? 'ligne d\'appui au retardant' : 'attaque directe';
+        obj.mission = mission; AV.objectif = obj;
+        rep.push(`objectif ${obj.obj}, mission ${mission}, pris en compte`);
+      } else rep.push(A.F().bilan().actifs.length ? 'je ne vois pas de feu actif à cet endroit, précisez l\'objectif' : 'je ne vois plus de front actif, le feu semble fixé. Voulez-vous un largage de noyage ou fin de mission ?');
+      compris = true;
+    } else if (/meme objectif|suivez (le )?leader|comme (le|votre) leader/.test(t) && AV.dernierObjectif) { AV.objectif = Object.assign({}, AV.dernierObjectif); rep.push('même objectif que le leader, pris en compte'); compris = true; }
+    if (/silence radio/.test(t)) { nouveau('p9'); rep.push('silence radio pris en compte'); compris = true; }
+    if (/rotation|autonomie|retour|combien de temps/.test(t)) { nouveau('p10'); if (a) rep.push(`rotation ${TYPES[a.type].rotation} minutes, autonomie ${String(Math.round(TYPES[a.type].autonomie / 6) / 10).replace('.', ',')} heures`); compris = true; }
+    if (/evolution|effet|resultat/.test(t) && AV.dernierEffet) { rep.push(AV.dernierEffet); compris = true; }
     const autorise = /personnel en securite/.test(t) && /autoris/.test(t);
-    if (/autoris/.test(t) && !autorise) rep.push('Confirmez « personnel en sécurité, autorisation de largage ».');
+    if (/autoris/.test(t) && !autorise) { rep.push('confirmez « personnel en sécurité, autorisation de largage »'); compris = true; }
     if (autorise) {
-      nouveau('p8');
-      if (!AV.objectif) rep.push('Je n\'ai pas d\'objectif, précisez.');
+      nouveau('p8'); compris = true;
+      if (!AV.objectif) rep.push('je n\'ai pas d\'objectif, précisez');
       else {
         const o = AV.objectif, dans = G.unites.filter(u => u.x != null && distSeg([u.x, u.y], o.p, o.q) < 80);
         if (dans.length) AV.touches = dans;
         const libres = AV.avions.filter(x => x.etat === 'zone' && !x.ordre), cand = libres.length ? libres : AV.avions.filter(x => x.etat === 'approche');
-        if (!libres.length) rep.push('Je ne suis pas encore sur zone, je largue à mon arrivée.');
         cand.forEach((x, i) => { x.ordre = { p: o.p, q: o.q, obj: o.obj, milieu: [(o.p[0] + o.q[0]) / 2, (o.p[1] + o.q[1]) / 2], t: Math.max(G.t + 90 + i * 40, x.tArrivee || 0) }; });
-        rep.push('Reçu, autorisation de largage. Je passe en silence radio jusqu\'au largage.');
+        rep.push(libres.length ? 'autorisation de largage prise en compte, je largue dans 2 minutes' : 'autorisation prise en compte, je largue dès mon arrivée sur zone');
         if (!AV.pecFaite) evaluePEC();
-        AV.objectif = null;
+        AV.dernierObjectif = o; AV.objectif = null;
       }
     }
-    pilote(a, rep.length ? `${a ? a.id + ', ' : ''}${rep.join(' ')}` : `${a ? a.id + ', ' : ''}je n'ai pas compris, répétez.`);
+    if (!compris) return dit(a, 'Je n\'ai pas compris, répétez.');
+    // relance sur le point suivant (guidee en debutant, minimale en expert)
+    let suite = '';
+    if (!autorise || !AV.objectif) {
+      const manque = ORDRE_PTS.find(k => P[k] == null && RELANCE[k] && (niv === 'debutant' || (niv === 'intermediaire' && ['p3', 'p5', 'p7', 'p8'].includes(k)) || (k === 'p7' && P.p6 != null) || (k === 'p8' && P.p7 != null)));
+      if (manque && !(autorise && AV.dernierObjectif)) suite = ' ' + RELANCE[manque];
+      if (AV.objectif && P.p8 != null && !autorise) suite = ' ' + RELANCE.p8;
+      if (AV.objectif && P.p8 == null) suite = ' ' + RELANCE.p8;
+    }
+    if (autorise && AV.dernierObjectif && !AV.objectif && AV.avions.some(x => x.ordre)) suite = ' Je passe en silence radio jusqu\'au largage.';
+    const phrase = rep.join(', ');
+    dit(a, phrase.charAt(0).toUpperCase() + phrase.slice(1) + '.' + suite);
   }
+  function dit(a, txt) { const m = `${a ? a.id + ', ' : ''}${txt}`; AV.dernier = m; pilote(a, m); }
   function evaluePEC() {
     AV.pecFaite = true;
     const P = AV.points, ev = A.evalue;
@@ -178,16 +225,19 @@
     const T = TYPES[a.type], { p, q } = a.ordre, F = A.F();
     const L = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1, ux = (q[0] - p[0]) / L, uy = (q[1] - p[1]) / L, m = a.ordre.milieu, l = Math.min(L, T.long);
     const a0 = [m[0] - ux * l / 2, m[1] - uy * l / 2], a1 = [m[0] + ux * l / 2, m[1] + uy * l / 2];
+    let n = 0;
     for (let d = 0; d <= l; d += 10) {
       const x = a0[0] + ux * d, y = a0[1] + uy * d;
-      if (!T.retardant) F.traite(x, y, T.larg / 2, 'eteint');
+      if (!T.retardant) n += F.traite(x, y, T.larg / 2, 'eteint');
       F.traite(x, y, T.larg / 2 + 5, 'mouille', T.retardant ? 3600 : 900);
     }
     A.G.besoinReseed = true;
     AV.largages.push({ a0, a1, t: A.G.t, retardant: T.retardant });
     a.largages++;
     if (!AV.pec910) { AV.pec910 = true; const P = AV.points; A.evalue('rto', 'ABE 9. Silence radio', P.p9 != null ? 'demandé' : 'non demandé', P.p9 != null ? 'ok' : 'mi'); A.evalue('rto', 'ABE 10. Évolution, rotation, autonomie', P.p10 != null ? 'demandées' : 'non demandées', P.p10 != null ? 'ok' : 'mi'); }
-    pilote(a, `${a.id}, largage effectué, ${a.ordre.obj}. Je pars en rotation, retour dans ${T.rotation} minutes.`);
+    const actifsPres = F.bilan().actifs.filter(i => { const [x, y] = F.xy(i); return distSeg([x, y], a0, a1) < 120; }).length;
+    AV.dernierEffet = T.retardant ? `ligne de retardant posée sur ${Math.round(l)} mètres, ${actifsPres ? 'le front est à moins de 120 mètres' : 'le front n\'est pas encore au contact'}` : n > 8 ? `largage au contact, flammes abattues sur ${Math.round(l)} mètres` : n > 0 ? 'largage partiellement au contact' : 'largage hors du front actif, peu d\'effet';
+    pilote(a, `${a.id}, largage effectué, ${a.ordre.obj} : ${AV.dernierEffet}. Je pars en rotation, retour dans ${T.rotation} minutes.`);
     if (AV.touches && AV.touches.length) {
       for (const u of AV.touches) A.radio(u.ca, 'CDG Salles', 'Nous avons pris le largage ! Pare-brise étoilé, un équipier contusionné, personnel choqué.', 'DIR 654', 'alerte');
       AV.touches = null;
