@@ -98,7 +98,7 @@
     this.c = carte; this.W = carte.w; this.H = carte.h; this.res = carte.res;
     this.fuel = carte.fuel; this.alt = carte.alt; this.haut = carte.haut;
     this.cal = opts.calage || 1;
-    this.setMeteo(opts.vent || 5, opts.dir || 270, opts.secheresse || 'forte');
+    this.setMeteo(opts.vent || 5, opts.dir || 270, opts.secheresse || 'forte', opts.hygro);
     const N = this.W * this.H;
     this.ta = new Float64Array(N).fill(Infinity);   // instant d'arrivee du feu (s)
     this.ext = new Uint8Array(N);                    // 1 : eteint par les secours, 2 : barriere (eau, retardant, bande noyee)
@@ -106,9 +106,17 @@
     this.t = 0; this.heap = []; this.spots = []; this.rng = mulberry(opts.graine || 1);
     this.burnt = 0;
   }
-  Feu.prototype.setMeteo = function (vent, dirDeg, sech) {
+  // teneur en eau d'equilibre des combustibles morts fins (Simard 1968) selon l'humidite de l'air, a 30 °C
+  function emc(rh, T) {
+    T = T == null ? 30 : T;
+    return rh < 10 ? 0.03229 + 0.281073 * rh - 0.000578 * rh * T : rh < 50 ? 2.22749 + 0.160107 * rh - 0.01478 * T : 21.0606 + 0.005565 * rh * rh - 0.00035 * rh * T - 0.483199 * rh;
+  }
+  Feu.prototype.setMeteo = function (vent, dirDeg, sech, hygro) {
     // vent : vitesse a 10 m (m/s), dirDeg : direction d'ou vient le vent (degres, 0 = nord)
-    this.vent = vent; this.dir = dirDeg; this.sech = sech; this.mois = SECHERESSE[sech];
+    // hygro : humidite relative (%) ; fixe la teneur en eau des combustibles morts (la secheresse fixe celle du vivant)
+    if (hygro == null) hygro = this.hygro;
+    this.vent = vent; this.dir = dirDeg; this.sech = sech; this.hygro = hygro; this.mois = SECHERESSE[sech].slice();
+    if (hygro != null) { const m = Math.max(3, emc(hygro)); this.mois[0] = m; this.mois[1] = m + 1.5; this.mois[2] = m + 3; }
     const to = (dirDeg + 180) * Math.PI / 180;           // direction vers laquelle souffle le vent
     this.wx = Math.sin(to); this.wy = Math.cos(to);      // repere carte : x est, y nord
     this.tab = PEUP.map(p => {
@@ -276,6 +284,6 @@
 
   function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
-  const FEU = { Feu, rothermel, MODELS, PEUP, SECHERESSE, LB };
+  const FEU = { Feu, rothermel, MODELS, PEUP, SECHERESSE, LB, emc };
   if (typeof module !== 'undefined' && module.exports) module.exports = FEU; else root.FEU = FEU;
 })(typeof window !== 'undefined' ? window : globalThis);
