@@ -58,6 +58,7 @@
   // ------------------------------------------------------------- conversation air-sol
   // le formateur parle a la place d'un pilote
   AV.dire = function (id, txt) { const a = AV.avions.find(x => x.id === id) || null; AV.chat.push({ de: id || 'Pilote', txt, t: A.G.t, pil: true }); A.radio(id || 'Pilote', 'COS ' + A.commune(), txt, 'Canal 18', '', { humain: true }); if (FEN.ouverte === 'air') rendChat(); return a; };
+  AV.fen = { ouvre: ouvreFen, ferme: fermeFen };
   AV.ouvreChat = function () {
     if (!AV.avions.some(a => a.etat !== 'engage' && a.etat !== 'parti')) { A.info('Aucun avion sur la fréquence air-sol pour le moment.'); return; }
     ouvreFen('air', rendChat);

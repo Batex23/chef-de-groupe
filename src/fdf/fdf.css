@@ -190,3 +190,4 @@ body:not(.accueil) .accueil-ecran { display: none; }
 .role-ca .poste[data-poste="GRP 272"], .role-ca .poste[data-poste="Canal 18"], .role-ca .rythme, .role-ca [data-onglet="moyens"] { display: none; }
 .role-ca .radios { grid-template-columns: 1fr; }
 .client [data-outil="numero"] { }
+.fenetre canvas { position: static; inset: auto; width: 100%; height: auto; }

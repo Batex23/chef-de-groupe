@@ -15,7 +15,7 @@
   const hm = t => { const m = Math.floor(t / 60); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
 
   const PHASES = [
-    ['dpif', 'DPIF'], ['zi', 'Analyse ZI'], ['transit', 'En transit'], ['arrivee', 'Arrivée'],
+    ['zi', 'Analyse ZI'], ['dpif', 'DPIF'], ['transit', 'En transit'], ['arrivee', 'Arrivée'],
     ['reco', 'Reconnaissance'], ['reflexes', 'Réflexes'], ['messages', 'Messages'], ['rto', 'RTO'], ['debrief', 'Débriefing'],
   ];
   // crayons de l'analyse ZI : couleurs conventionnelles SDIS 33 (rouge incendie, bleu eau, vert points sensibles,
@@ -41,22 +41,36 @@
   // CIS et accès au secteur (les CIS hors carte entrent par la route indiquee)
   const CIS = [
     { nom: 'Salles', p: null, delai: 0 },
-    { nom: 'Belin-Béliet', p: [12500, 2600], delai: 9 * 60 },
-    { nom: 'Le Barp', p: [12500, 9400], delai: 8 * 60 },
-    { nom: 'Mios', p: [9000, 10750], delai: 8 * 60 },
-    { nom: 'Sanguinet', p: [150, 2200], delai: 12 * 60 },
-    { nom: 'Biganos', p: [6400, 10750], delai: 14 * 60 },
-    { nom: 'Marcheprime', p: [12000, 10750], delai: 15 * 60 },
-    { nom: 'Saint-Magne', p: [12500, 6000], delai: 13 * 60 },
+    { nom: 'Belin-Béliet', p: [12500, 2600], delai: 4 * 60 },
+    { nom: 'Le Barp', p: [12500, 9400], delai: 3.5 * 60 },
+    { nom: 'Mios', p: [9000, 10750], delai: 3.5 * 60 },
+    { nom: 'Sanguinet', p: [150, 2200], delai: 5 * 60 },
+    { nom: 'Biganos', p: [6400, 10750], delai: 6 * 60 },
+    { nom: 'Marcheprime', p: [12000, 10750], delai: 6 * 60 },
+    { nom: 'Saint-Magne', p: [12500, 6000], delai: 5.5 * 60 },
   ];
   const CCF_L = 6000, DEBIT_LDV = 250;           // litres par CCF (6 000 L par defaut au SDIS 33), L/min par lance de tourelle (LDV 250)
 
   // niveaux de difficulte
   const NIVEAUX = {
-    debutant: { nom: 'Débutant', vents: [3, 4, 5, 6], age: [10, 16], erreurTicket: 0, vue: 450, aides: true, retour: true, detresses: 0, tol: 1.5 },
-    intermediaire: { nom: 'Intermédiaire', vents: [5, 6, 7, 8, 10], age: [12, 25], erreurTicket: 0.35, vue: 300, aides: false, retour: false, detresses: 1, tol: 1 },
-    expert: { nom: 'Expert', vents: [7, 8, 10, 12, 14], age: [18, 35], erreurTicket: 0.5, vue: 250, aides: false, retour: false, detresses: 2, tol: 0.7 },
+    debutant: { nom: 'Débutant', vents: [3, 4, 5], ha0: [0.4, 0.7], erreurTicket: 0, vue: 450, aides: true, retour: true, detresses: 0, tol: 1.5 },
+    intermediaire: { nom: 'Intermédiaire', vents: [4, 5, 6, 7], ha0: [0.6, 1], erreurTicket: 0.35, vue: 300, aides: false, retour: false, detresses: 1, tol: 1 },
+    expert: { nom: 'Expert', vents: [5, 6, 7, 8], ha0: [0.8, 1.3], erreurTicket: 0.5, vue: 250, aides: false, retour: false, detresses: 2, tol: 0.7 },
   };
+  // risque du jour : secheresse des vegetaux et composition du depart (PROVISOIRE, en attente du tableau SDIS 33)
+  const RISQUES = [
+    { k: 'faible', nom: 'Faible', sech: 'moderee', uiff: 2, hr: [45, 60] },
+    { k: 'modere-bas', nom: 'Modéré bas', sech: 'moderee', uiff: 2, hr: [35, 50] },
+    { k: 'modere-haut', nom: 'Modéré haut', sech: 'forte', uiff: 3, hr: [28, 40] },
+    { k: 'severe', nom: 'Sévère', sech: 'forte', uiff: 3, hr: [22, 32] },
+    { k: 'tres-severe', nom: 'Très sévère', sech: 'extreme', uiff: 4, hr: [16, 26] },
+    { k: 'exceptionnel', nom: 'Exceptionnel', sech: 'extreme', uiff: 4, hr: [12, 20] },
+  ];
+  const RISQUES_NIV = { debutant: ['faible', 'modere-bas', 'modere-haut'], intermediaire: ['modere-bas', 'modere-haut', 'severe'], expert: ['modere-haut', 'severe', 'tres-severe'] };
+  // cinetique d'exercice : les engins roulent plus vite que la realite pour que les moyens arrivent en jeu
+  const CINE = 2.4;
+  // surface maximale d'un feu de chef de groupe (au-dela, montee en puissance)
+  const HA_MAX_CDG = 6;
   // praticabilite hors piste d'un CCF par peuplement (part de 6 km/h), d'apres la presentation du massif
   const PRATIC = [1, 1, 1, 0.6, 0.45, 0.4, 0.12, 0.15, 0.5, 0.6, 0.08, 0.3, 0.3, 0.05];
   const G = window.G = {};
@@ -96,25 +110,30 @@
   }
 
   // parametres de la partie (identiques chez l'hote et les clients : meme graine, meme carte inventee)
-  function confAccueil() { return { seed: (Date.now() & 0xffff) || 7, niv: $('#c-niv').value, vent: $('#c-vent').value, sech: $('#c-sech').value, lieu: $('#c-lieu').value }; }
+  function confAccueil() { return { seed: (Date.now() & 0xffff) || 7, niv: $('#c-niv').value, vent: $('#c-vent').value, dir: $('#c-dir').value, hygro: $('#c-hygro').value, risque: $('#c-risque').value, lieu: $('#c-lieu').value }; }
   function demarre(conf) {
     const seed = conf.seed, R = rng(seed);
     const nivK = conf.niv, niv = NIVEAUX[nivK];
-    const vent = conf.vent === 'alea' ? niv.vents[Math.floor(R() * niv.vents.length)] : +conf.vent;
+    const vent = !conf.vent || conf.vent === 'alea' ? niv.vents[Math.floor(R() * niv.vents.length)] : +conf.vent;
     const dirs = [270, 250, 225, 300, 315, 0, 45, 90, 200];
-    const dir = dirs[Math.floor(R() * dirs.length)] + Math.round((R() - 0.5) * 20);
-    const sech = conf.sech;
+    const dir = !conf.dir || conf.dir === 'alea' ? dirs[Math.floor(R() * dirs.length)] + Math.round((R() - 0.5) * 20) : +conf.dir;
+    const rks = RISQUES_NIV[nivK];
+    const rkAlea = rks[Math.floor(R() * rks.length)];
+    const risque = RISQUES.find(r => r.k === conf.risque) || RISQUES.find(r => r.k === rkAlea);
+    const hygro = !conf.hygro || conf.hygro === 'alea' ? risque.hr[0] + Math.floor(R() * (risque.hr[1] - risque.hr[0])) : +conf.hygro;
+    const sech = conf.sech || risque.sech;
     const [ix, iy] = choisitDepart(R, conf.lieu);
     Object.assign(G, {
-      seed, R, vent, dir, sech, ix, iy, t: 0, heure0: (14 * 60 + 5 + Math.floor(R() * 90)) * 60, age: (niv.age[0] + Math.floor(R() * (niv.age[1] - niv.age[0]))) * 60, niv, nivK, mesMsgs: [],
+      seed, R, vent, dir, sech, hygro, risque, ix, iy, t: 0, heure0: (14 * 60 + 5 + Math.floor(R() * 90)) * 60, age: 0, ha0: niv.ha0[0] + R() * (niv.ha0[1] - niv.ha0[0]), niv, nivK, mesMsgs: [],
       phase: 0, faites: {}, evals: [], radio: [], dessins: [], unites: [], pe: {}, reflexes: {}, cr: 0, msgs: {}, vu: new Uint8Array(carte.w * carte.h),
       dirtyFond: true, sel: null, outil: null, crayon: null, demandes: [], lignes: [], fin: false, etatFeu: 'en cours', tFixe: null, tMaitrise: null,
     });
     G.inv = INV.genere(carte, R, nivK);
     initReserves();
-    F = G.feu = new FEU.Feu(carte, { vent, dir, secheresse: sech, graine: seed });
+    F = G.feu = new FEU.Feu(carte, { vent, dir, secheresse: sech, hygro, graine: seed });
     F.allume(ix, iy, 0);
-    F.avance(G.age);
+    // feu deja developpe a l'alerte : surface cible selon le niveau (dimension chef de groupe)
+    for (let a = 60; a <= 90 * 60; a += 60) { F.avance(a); G.age = a; if (F.bilan().ha >= G.ha0) break; }
     // cause du feu (indice a decouvrir pres de l'origine)
     const nearRoad = carte.routes.some(r => r.k === 'route' && r.p.some(p => Math.hypot(p[0] - ix, p[1] - iy) < 60));
     const f0 = CARTE.fuelAt(ix, iy);
@@ -126,10 +145,13 @@
     const casSalles = carte.sensibles.find(s => /Incendie et de Secours de Salles/.test(s.n));
     CIS[0].p = casSalles ? casSalles.p : [11000, 9300];
     G.cdg = { id: 'CDG', label: 'CDG Salles', x: CIS[0].p[0], y: CIS[0].p[1], path: null, v: 60 };
-    const autre = CIS[1 + Math.floor(R() * 3)];
-    ajouteUIFF(CIS[0], 60); ajouteUIFF(autre, 60 + autre.delai);
+    // composition du depart selon le risque du jour
+    ajouteUIFF(CIS[0], 60);
+    const autres = CIS.slice(1, 4).sort(() => R() - 0.5).concat(CIS.slice(4));
+    for (let k = 1; k < risque.uiff; k++) { const c = autres[k - 1]; ajouteUIFF(c, 60 + c.delai); }
     // ticket de depart : la tour de guet peut se tromper d'un carre
     const off = R() < niv.erreurTicket ? [(R() < 0.5 ? -1 : 1) * 400, 0] : [0, 0];
+    G.ticketXY = [ix + off[0], iy + off[1]];
     G.ticket = { commune: CARTE.commune(ix, iy), ld: CARTE.lieuDit(ix + off[0], iy), coord: CARTE.dfci(ix + off[0], iy + off[1]), source: 'tour de guet de Salles' };
     radio('CODIS 33', 'CDG Salles', `Départ feu de forêt. Commune de ${G.ticket.commune}, lieu-dit ${G.ticket.ld}, coordonnées ${G.ticket.coord}. Fumée signalée par la ${G.ticket.source}. Départ : CDG Salles, ${G.unites.map(u => u.label).join(', ')}.`, 'GRP 272', 'codis');
     document.body.classList.remove('accueil');
@@ -144,10 +166,10 @@
   // lot EGL (etablissement de grande longueur), bulldozer (creation d'acces ou de bande), Charlie 33
   const TYPES_MOYENS = {
     UIFF: { cap: 2 * CCF_L, delai: 0, ordres: null },
-    GPF: { cap: 12000, delai: 25 * 60, ordres: [['alpha', 'Point d\'eau mobile ici'], ['aller', 'Aller à…'], ['eau', 'Se remplir']] },
-    Chenillette: { cap: 2000, delai: 30 * 60, pratic: 0.7, ordres: [['front', 'Attaque de front'], ['flancG', 'Attaque flanc gauche'], ['flancD', 'Attaque flanc droit'], ['percee', 'Percée de flanc'], ['lisiere', 'Traitement des lisières'], ['eau', 'Au point d\'eau'], ['aller', 'Aller à…']] },
-    'Lot EGL': { cap: 0, delai: 30 * 60, ordres: [['egl', 'Établir vers…'], ['aller', 'Aller à…'], ['attente', 'Replier']] },
-    Bulldozer: { cap: 0, delai: 45 * 60, ordres: [['bande', 'Tracer une bande…'], ['aller', 'Aller à…'], ['attente', 'Arrêt']] },
+    GPF: { cap: 12000, delai: 12 * 60, ordres: [['alpha', 'Point d\'eau mobile ici'], ['aller', 'Aller à…'], ['eau', 'Se remplir']] },
+    Chenillette: { cap: 2000, delai: 15 * 60, pratic: 0.7, ordres: [['front', 'Attaque de front'], ['flancG', 'Attaque flanc gauche'], ['flancD', 'Attaque flanc droit'], ['percee', 'Percée de flanc'], ['lisiere', 'Traitement des lisières'], ['eau', 'Au point d\'eau'], ['aller', 'Aller à…']] },
+    'Lot EGL': { cap: 0, delai: 15 * 60, ordres: [['egl', 'Établir vers…'], ['aller', 'Aller à…'], ['attente', 'Replier']] },
+    Bulldozer: { cap: 0, delai: 20 * 60, ordres: [['bande', 'Tracer une bande…'], ['aller', 'Aller à…'], ['attente', 'Arrêt']] },
   };
   let nType = {};
   function ajouteMoyen(type, cis, tArrivee) {
@@ -201,7 +223,7 @@
     // le dernier tronçon (de la piste au point vise) se fait hors piste
     r.pts[r.pts.length - 1].hp = !!horsPiste; r.pts[1].hp = Math.hypot(r.pts[1].x - o.x, r.pts[1].y - o.y) > 30;
     let Lr = 0; for (let i = 2; i < r.pts.length - 1; i++) Lr += Math.hypot(r.pts[i].x - r.pts[i - 1].x, r.pts[i].y - r.pts[i - 1].y);
-    o.path = r.pts; o.pi = 1; o.dest = [x, y]; o.vit = Math.max(4, Lr / Math.max(1, r.t - (r.L - Lr) / 1.4)); o.tTrajet = r.t; return r;
+    o.path = r.pts; o.pi = 1; o.dest = [x, y]; o.vit = Math.max(4, Lr / Math.max(1, r.t - (r.L - Lr) / 1.4)) * CINE; o.tTrajet = r.t / CINE; return r;
   }
   function vitesseHPu(o, x, y) { const v = vitesseHP(x, y); return o && o.type === 'Chenillette' ? Math.max(v, 6 / 3.6 * 0.7) : v; }
   function vitesseHP(x, y) {
@@ -254,7 +276,7 @@
     if (u.etat === 'alerte' && G.t >= u.tDispo) {
       const cis = CIS.find(c => c.nom === u.cis);
       u.x = cis.p[0]; u.y = cis.p[1]; u.etat = 'transit';
-      const dest = G.ptEngagement || [G.cdg.x, G.cdg.y];
+      const dest = G.ptEngagement || G.ticketXY || [G.cdg.x, G.cdg.y];
       allerA(u, dest[0], dest[1]);
       radio(u.ca, 'CODIS 33', `${u.label} en route.`, 'GRP 272');
     }
@@ -418,6 +440,12 @@
 
   // =============================================================== evenements, etat du feu
   function evenements() {
+    // feu hors dimension chef de groupe
+    if (!G.horsDim && G.bilan && G.bilan.ha > HA_MAX_CDG && G.etatFeu === 'en cours') {
+      G.horsDim = true;
+      radio('CODIS 33', 'CDG Salles', `CDG Salles, le feu dépasse ${HA_MAX_CDG} ha : nous engageons un chef de colonne et un deuxième groupe. Poursuivez votre action et préparez votre compte rendu pour son arrivée.`, 'GRP 272', 'codis');
+      evalue('rto', 'Feu contenu dans la dimension chef de groupe', `${G.bilan.ha.toFixed(1)} ha à ${heure()}`, 'ko', `Un feu de chef de groupe se traite sous ${HA_MAX_CDG} ha : engagement immédiat de la 1re UIFF sur la tête ou le flanc dangereux, demande de renforts dès le message d'ambiance.`);
+    }
     // points d'eau en cours d'activation
     for (const p of Object.values(G.pe)) if (!p.actif && G.t >= p.tActif && p.sec) { delete G.pe[p.n]; radio('Point Alpha', 'CDG Salles', `Point d'eau ${p.n} : niveau insuffisant, impossible d'amorcer. Point d'eau non pérenne, à sec.`, 'DIR 654', 'alerte'); evalue('rto', `Point d'eau ${p.n} non pérenne`, 'à sec à l\'activation', 'mi', 'Triangle à moitié bleu : point d\'eau non pérenne, prévoir une solution de repli.'); }
     for (const p of Object.values(G.pe)) if (!p.actif && G.t >= p.tActif) { p.actif = true; radio('Point Alpha', 'CDG Salles', `Point d'eau ${p.n} opérationnel (${p.moyen}, ${p.debit} m³/h).`, 'DIR 654'); }
@@ -426,7 +454,7 @@
       d.fait = true; const type = d.type || 'UIFF';
       if (type === 'Charlie 33') { G.c33Prevu = true; G.tC33 = G.t + 16 * 60; radio('CODIS 33', 'CDG Salles', 'Charlie 33 engagé, sur zone dans une quinzaine de minutes. Contact sur votre fréquence air-sol.', 'GRP 272', 'codis'); continue; }
       if (type === 'Canadair' || type === 'Dash 8') { if (window.AVIONS) AVIONS.demande(type, d.n || 1); continue; }
-      for (let k = 0; k < d.n; k++) { const cis = CIS[1 + ((G.unites.length + k) % (CIS.length - 1))]; ajouteMoyen(type, cis, cis.delai + (TYPES_MOYENS[type] ? TYPES_MOYENS[type].delai : 0) + k * 120); }
+      for (let k = 0; k < d.n; k++) { const cis = CIS[1 + ((G.unites.length + k) % (CIS.length - 1))]; ajouteMoyen(type, cis, cis.delai + (TYPES_MOYENS[type] ? TYPES_MOYENS[type].delai : 0) + k * 60); }
       radio('CODIS 33', 'CDG Salles', `${d.n} ${type} engagé(s) vers votre point d'engagement.`, 'GRP 272', 'codis'); renderMoyens();
     }
     // etat du feu : fixe (la tete n'avance plus), maitrise (plus de front actif), eteint (lisieres traitees)
@@ -496,7 +524,7 @@
   }
   function prevision(minutes) {
     // simulation sans lutte a partir de l'etat actuel (dimensionnement, surface menacee)
-    const P = new FEU.Feu(carte, { vent: G.vent, dir: G.dir, secheresse: G.sech, graine: 1 });
+    const P = new FEU.Feu(carte, { vent: G.vent, dir: G.dir, secheresse: G.sech, hygro: G.hygro, graine: 1 });
     P.ta.set(F.ta); P.ext.set(F.ext); P.t = F.t; P.reseed(); P.avance(F.t + minutes * 60);
     return P;
   }
@@ -538,9 +566,14 @@
   // ---------------- DPIF
   PH.dpif = () => `
     <h2>DPIF</h2>
-    <p class="aide">Départ pour intervention feu. Préparez votre départ avec le ticket et la carte, avant de quitter le CIS.</p>
-    <div class="ticket">${esc(G.radio[0].txt)}\nMétéo : vent ${G.vent} m/s (${Math.round(G.vent * 3.6)} km/h), de secteur ${CARTE.rose(G.dir)}. Sécheresse ${G.sech}.</div>
+    <p class="aide">Départ pour intervention feu. Votre analyse de la ZI est faite : préparez le départ avec le ticket et le bulletin du jour (onglet Ticket), avant de quitter le CIS.</p>
+    <div class="ticket">${esc(G.radio[0].txt)}</div>
     <form class="form" id="f-dpif">
+      <fieldset><legend>Conditions astro-météo</legend>
+        <label class="ligne">Taux d'hygrométrie <span><input type="number" name="hygro" min="0" max="100" style="width:80px"> %</span></label>
+        <label>Vent du <select name="ventdu"><option value="">—</option>${opt(DIRS)}</select></label>
+        <label>Risque du jour <select name="risque"><option value="">—</option>${RISQUES.map(r => `<option value="${r.k}">${r.nom}</option>`).join('')}</select></label>
+      </fieldset>
       <fieldset><legend>CGI</legend>
         <label>Coordonnées (carré DFCI) <input type="text" name="coord" value="${esc(G.ticket.coord)}"></label>
         <label class="ligne">Vent <span>${G.vent} m/s × 100 = <input type="number" name="vprop" style="width:90px"> m/h</span></label>
@@ -560,6 +593,8 @@
       e.preventDefault(); const f = new FormData(e.target);
       if (!G.ptAtteindre) { info('Choisissez d\'abord le point à atteindre sur la carte.'); return; }
       const vraieDir = 'vers le ' + CARTE.rose(G.dir + 180), vp = +f.get('vprop');
+      const hy = f.get('hygro') === '' ? null : +f.get('hygro'), okH = hy != null && Math.abs(hy - G.hygro) <= 3, okV = f.get('ventdu') === CARTE.rose(G.dir), okR = f.get('risque') === G.risque.k;
+      evalue('dpif', 'Conditions astro-météo', `HR ${hy == null ? '—' : hy + ' %'}, vent du ${f.get('ventdu') || '—'}, risque ${(RISQUES.find(r => r.k === f.get('risque')) || { nom: '—' }).nom} (bulletin : HR ${G.hygro} %, vent du ${CARTE.rose(G.dir)}, risque ${G.risque.nom})`, okH && okV && okR ? 'ok' : (okH + okV + okR) >= 2 ? 'mi' : 'ko', 'L\'hygrométrie et le risque du jour conditionnent la vitesse du feu et le départ type.');
       evalue('dpif', 'Coordonnées', `${f.get('coord')} (ticket ${G.ticket.coord}, réel ${CARTE.dfci(G.ix, G.iy)})`, f.get('coord').toUpperCase().replace(/\s+/g, ' ').trim() === G.ticket.coord ? 'ok' : 'mi');
       evalue('dpif', 'Vitesse de propagation estimée', `${vp || '—'} m/h (règle du mémento : ${G.vent * 100} m/h)`, vp && Math.abs(vp - G.vent * 100) <= G.vent * 20 ? 'ok' : 'ko', 'Vent en m/s × 100 = vitesse de propagation en m/h.');
       evalue('dpif', 'Direction de propagation', `${f.get('dir') || '—'} (attendu : ${vraieDir})`, f.get('dir') === vraieDir ? 'ok' : 'ko', 'Le feu part à l\'opposé d\'où vient le vent.');
@@ -575,25 +610,25 @@
       allerA(G.cdg, px, py);
       for (const u of G.unites) if (u.path && u.etat === 'transit') allerA(u, px, py);
       G.tDepart = G.t;
-      setPhase('zi');
+      setPhase('transit');
     };
   };
   // ---------------- Analyse ZI
   PH.zi = () => `
     <h2>Analyse de la ZI</h2>
-    <p class="aide">En transit, analysez la zone d'intervention sur la carte avec les crayons (barre d'outils de la carte). Tracez à main levée ; un trait fermé délimite une zone.</p>
+    <p class="aide">Alerte reçue (onglet Ticket : ticket de départ et bulletin du jour). Avant le DPIF, analysez la zone d'intervention sur la carte avec les crayons (barre d'outils de la carte). Tracez à main levée ; un trait fermé délimite une zone.</p>
     <ol class="form" style="padding-left:0;list-style:none">${CRAYONS.map(c => `<li style="display:flex;gap:8px;align-items:center"><i style="width:14px;height:14px;border-radius:50%;background:${c.c};border:2px solid #fff;display:inline-block"></i> ${c.n}/ ${esc(c.nom)} <small class="aide">(${G.dessins.filter(d => d.n === c.n).length})</small></li>`).join('')}</ol>
     <form class="form" id="f-zi">
       <fieldset><legend>4/ Nature de la végétation dans l'axe du feu</legend><div class="cases">${CATS.map(c => `<label><input type="checkbox" name="veg" value="${esc(c)}"> ${esc(c)}</label>`).join('')}</div></fieldset>
       <div class="btns"><button class="btn" type="submit">Analyse terminée</button></div>
     </form>
-    <p class="aide">Transit en cours : arrivée prévue vers ${G.cdg.path ? hm(G.heure0 + G.t + (G.cdg.tTrajet || 0)) : '—'}.</p>`;
+    `;
   PH.zi_bind = el => {
     $('#f-zi').onsubmit = e => {
       e.preventDefault(); const f = new FormData(e.target);
       evalueZI(f.getAll('veg'));
       G.crayon = null; renderCrayons(); cvD.classList.remove('crayon');
-      setPhase('transit');
+      setPhase('dpif');
     };
   };
   function evalueZI(veg) {
@@ -1077,7 +1112,7 @@
       renderRegle();
     };
     $('#saisie').onkeydown = e => {
-      if (e.key === 'Enter') { const t = e.target.value.trim(); if (t) G.dessins.push({ n: G.crayonTexte || 4, texte: t, pts: [G.posTexte] }); e.target.hidden = true; e.target.value = ''; if (G.phase === 1) renderPhase(); }
+      if (e.key === 'Enter') { const t = e.target.value.trim(); if (t) G.dessins.push({ n: G.crayonTexte || 4, texte: t, pts: [G.posTexte] }); e.target.hidden = true; e.target.value = ''; if (G.phase === 0) renderPhase(); }
       if (e.key === 'Escape') { e.target.hidden = true; e.target.value = ''; }
     };
     let drag = null, trait = null;
@@ -1099,7 +1134,7 @@
     });
     cvD.addEventListener('pointerup', () => {
       if (REGLE.up()) return;
-      if (trait) { const a = trait.pts[0], b = trait.pts[trait.pts.length - 1]; trait.ferme = trait.pts.length > 6 && Math.hypot(a[0] - b[0], a[1] - b[1]) * vue.s < 30; trait = null; if (G.phase === 1) renderPhase(); }
+      if (trait) { const a = trait.pts[0], b = trait.pts[trait.pts.length - 1]; trait.ferme = trait.pts.length > 6 && Math.hypot(a[0] - b[0], a[1] - b[1]) * vue.s < 30; trait = null; if (G.phase === 0) renderPhase(); }
       drag = null;
     });
     cvD.addEventListener('contextmenu', e => e.preventDefault());
@@ -1113,7 +1148,7 @@
   function allerCDG(x, y) { const r = allerA(G.cdg, x, y); if (r) info(`VLCG : ${Math.round(r.L)} m, ${Math.max(1, Math.round(r.t / 60))} min.`); }
   function clicOutil(x, y) {
     const o = G.outil;
-    if (o === 'point') { G.ptAtteindre = [x, y]; const r = CARTE.route(G.cdg.x, G.cdg.y, x, y); $('#pt-txt').textContent = `${CARTE.dfci(x, y)} · ${CARTE.lieuDit(x, y)}`; $('#itin').value = r ? `${(r.L / 1000).toFixed(1)} km par routes et pistes, environ ${Math.round(r.t / 60)} min` : 'pas d\'itinéraire'; G.itin = r; finOutil(); return; }
+    if (o === 'point') { G.ptAtteindre = [x, y]; const r = CARTE.route(G.cdg.x, G.cdg.y, x, y); if ($('#pt-txt')) $('#pt-txt').textContent = `${CARTE.dfci(x, y)} · ${CARTE.lieuDit(x, y)}`; if ($('#itin')) $('#itin').value = r ? `${(r.L / 1000).toFixed(1)} km par routes et pistes, environ ${Math.round(r.t / CINE / 60)} min` : 'pas d\'itinéraire'; G.itin = r; finOutil(); return; }
     if (o === 'aller') { allerCDG(x, y); finOutil(); return; }
     if (o === 'engagement') { G.ptEngagement = [x, y]; reflexe('engagement'); radio('CDG Salles', 'Chefs d\'agrès', `Point d'engagement des moyens : ${CARTE.dfci(x, y)}, ${CARTE.lieuDit(x, y)}.`, G.dir654 ? 'DIR 654' : 'GRP 272'); for (const u of G.unites) if (u.etat === 'transit') allerA(u, x, y); finOutil(); renderPhase(); return; }
     const u = G.unites.find(u => u.id === G.sel);
@@ -1138,7 +1173,7 @@
     if (o === 'saute') { NET.cmd({ type: 'saute', x, y }); info('Saute de feu injectée.'); finOutil(); return; }
     if (o === 'numero') {
       const n = G.crayonPrec || 6, k = G.dessins.filter(d => d.num && d.n === n).length + 1;
-      G.dessins.push({ n, num: k, pts: [[x, y]] }); if (G.phase === 1) renderPhase(); return;
+      G.dessins.push({ n, num: k, pts: [[x, y]] }); if (G.phase === 0) renderPhase(); return;
     }
     if (o === 'texte') {
       const r = cvD.getBoundingClientRect(), inp = $('#saisie');
@@ -1147,8 +1182,39 @@
     }
     if (o === 'largage') { if (AVIONS.clic(x, y)) finOutil(); return; }
 
+    if (o === 'peuplement') { vuePeuplement(x, y); return; }
     if (o === 'mesure') { if (!G.mesure || G.mesure.length === 2) G.mesure = [[x, y]]; else { G.mesure.push([x, y]); const [a, b] = G.mesure; info(`Distance : ${Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]))} m, direction ${CARTE.rose(CARTE.cap(b[0] - a[0], b[1] - a[1]))}.`); } return; }
     if (o === 'gomme') { let bi = -1, bd = 40 / vue.s; G.dessins.forEach((d, i) => d.pts.forEach(p => { const dd = Math.hypot(p[0] - x, p[1] - y); if (dd < bd) { bd = dd; bi = i; } })); if (bi >= 0) G.dessins.splice(bi, 1); return; }
+  }
+  // vue de terrain du peuplement : il faut avoir vu le secteur (reconnaissance), sauf en debutant
+  const AGES = [['', '—'], ['0', 'Pas de pins'], ['5', 'Semis'], ['6', 'Moins de 10 ans'], ['7', '10 à 20 ans'], ['8', '20 à 40 ans'], ['9', 'Plus de 40 ans'], ['11', 'Âges divers'], ['10', 'Feuillus']];
+  function vuePeuplement(x, y) {
+    const i = CARTE.idx(x, y); if (i < 0) return;
+    const proche = [G.cdg, ...G.unites.filter(u => u.x != null)].some(o => Math.hypot(o.x - x, o.y - y) < G.niv.vue + 150);
+    if (!G.niv.aides && !proche && NET.role !== 'formateur') { info('Pas de vue sur ce secteur : un engin ou vous-même devez être sur place (reconnaissance).'); return; }
+    const m = PEUPLEMENT.mesure(carte, x, y), q = PEUPLEMENT.params(m), t = PEUPLEMENT.texte(q);
+    const attendu = [3, 1, 2, 12, 13, 4, 0].includes(q.f) ? '0' : String(q.f);
+    const rendu = (rep) => {
+      $('#fenetre').innerHTML = `<h2>Vue de terrain · ${esc(CARTE.dfci(x, y))}</h2>
+        <p class="aide">${esc(CARTE.lieuDit(x, y))}. Estimez l'âge du peuplement et la continuité des strates. Le personnage mesure 1,80 m.</p>
+        <canvas id="pp-cv" width="540" height="320" style="width:100%;border-radius:6px;display:block"></canvas>
+        ${rep ? `<div class="note"><b>${esc(t.nom)}</b><br>${esc(t.detail)}${rep.txt ? '<br><i>' + esc(rep.txt) + '</i>' : ''}</div>`
+          : `<form class="form" id="pp-f"><label>Âge des pins <select name="age">${AGES.map(([k, n]) => `<option value="${k}">${n}</option>`).join('')}</select></label>
+             <label>Strates <select name="cont"><option value="">—</option><option value="1">Continuité sous-bois / houppiers</option><option value="0">Discontinuité verticale</option></select></label>
+             <div class="btns"><button class="btn" type="submit">Vérifier</button><button class="btn sec" type="button" id="pp-x">Fermer</button></div></form>`}
+        ${rep ? '<div class="btns"><button class="btn sec" id="pp-x">Fermer</button></div>' : ''}`;
+      PEUPLEMENT.dessine($('#pp-cv'), m, { reponse: !!rep });
+      $('#pp-x').onclick = () => AVIONS.fen.ferme();
+      const f = $('#pp-f');
+      if (f) f.onsubmit = e => {
+        e.preventDefault(); const d = new FormData(f), age = d.get('age'), cont = d.get('cont');
+        const okA = age === attendu || (attendu === '11' && ['7', '8', '9'].includes(age)), okC = cont !== '' && (cont === '1') === q.continu;
+        G.nbLectures = (G.nbLectures || 0) + 1;
+        if (G.nbLectures <= 3 && NET.mode !== 'client') evalue('reco', 'Lecture du peuplement', `${(AGES.find(a => a[0] === age) || ['', '—'])[1]}, ${cont === '1' ? 'continuité' : cont === '0' ? 'discontinuité' : '—'} (réel : ${t.nom}, ${q.continu ? 'continuité' : 'discontinuité'} verticale)`, okA && okC ? 'ok' : okA || okC ? 'mi' : 'ko', 'Hauteur et élagage des pins donnent l\'âge ; la continuité sous-bois / houppiers conditionne le passage en cimes.');
+        rendu({ txt: okA && okC ? 'Bonne lecture.' : `Votre estimation : ${(AGES.find(a => a[0] === age) || ['', '—'])[1]}${okA ? ' (juste)' : ' (à revoir)'}, ${cont === '' ? 'strates non estimées' : okC ? 'strates justes' : 'strates à revoir'}.` });
+      };
+    };
+    AVIONS.fen.ouvre('peuplement', () => rendu(null));
   }
   function finOutil() { G.outil = null; cvD.classList.remove('crayon'); $$('[data-outil]').forEach(x => x.setAttribute('aria-pressed', false)); G.dirtyFond = true; }
   function renderCrayons() {
@@ -1265,10 +1331,10 @@
   // =============================================================== HUD, radio, memento
   function majHUD() {
     $('#heure').textContent = heure();
-    $('#meteo').textContent = `Vent ${G.vent} m/s du ${CARTE.rose(G.dir)} · ${G.sech}`;
+    $('#meteo').textContent = `Vent du ${CARTE.rose(G.dir)}, ${G.vent} m/s · HR ${G.hygro} % · risque ${G.risque.nom.toLowerCase()}`;
     // arrivee du CDG au point a atteindre
     if (NET.mode === 'client') return;
-    if (G.phase >= 1 && !G.cdg.path && G.ptAtteindre && !G.cdgArrive) { G.cdgArrive = true; G.tArriveeCDG = G.t; if (G.phase >= 3) renderPhase(); info('Vous êtes arrivé au point à atteindre.'); }
+    if (G.phase >= 2 && !G.cdg.path && G.ptAtteindre && !G.cdgArrive) { G.cdgArrive = true; G.tArriveeCDG = G.t; if (G.phase >= 3) renderPhase(); info('Vous êtes arrivé au point à atteindre.'); }
     if (G.phase === 3 && G.cdgArrive && !$('#f-arr')) renderPhase();
     if (G.c33Prevu && G.t >= G.tC33 && !G.c33) { G.c33 = true; radio('Charlie 33', 'CDG Salles', 'Charlie 33 sur zone, je vous transmets la situation.', 'Air/Air'); observe(); }
     if (!$('#o-moyens').hidden && Math.floor(G.t) % 8 === 0) renderMoyens();
@@ -1288,10 +1354,13 @@ Commune : ${esc(t.commune)}
 Lieu-dit : ${esc(t.ld)}
 Coordonnées DFCI : ${esc(t.coord)} (${CARTE.dfciPhon(t.coord)})
 Source : ${esc(t.source)}
-Départ : CDG Salles, ${G.unites.slice(0, 2).map(u => esc(u.label)).join(', ')}
-Météo : vent ${G.vent} m/s (${Math.round(G.vent * 3.6)} km/h) de secteur ${CARTE.rose(G.dir)}
-Sécheresse : ${G.sech}
+Départ : CDG Salles, ${G.unites.slice(0, G.risque.uiff).map(u => esc(u.label)).join(', ')}
 Transmissions : GRP 272 (CODIS), DIR 654 (chefs d'agrès), canal 18 (air-sol)</div>
+      <h3>Bulletin astro-météo du jour</h3>
+      <div class="ticket">Vent du ${CARTE.rose(G.dir)}, ${G.vent} m/s (${Math.round(G.vent * 3.6)} km/h)
+Taux d'hygrométrie : ${G.hygro} %
+Risque feux de forêt : ${G.risque.nom}
+Départ type associé : CDG + ${G.risque.uiff} UIFF</div>
       <p class="aide">Niveau ${G.niv.nom}.</p>`;
   }
   function renderMemento() {

@@ -32,6 +32,7 @@
         <button data-outil="texte" title="Écrire sur la carte (couleur du crayon choisi)">Texte</button>
         <button data-outil="numero" title="Numéroter (obstacles en orange, points d'eau en bleu : choisir d'abord la couleur)">N°</button>
         <button id="b-regle" title="Règle feu de forêt virtuelle">Règle FDF</button>
+        <button data-outil="peuplement" title="Vue de terrain : estimer l'âge des pins et les strates (sur un secteur reconnu)">Peuplement</button>
         <button data-outil="mesure" title="Mesurer une distance">Mesure</button>
         <button data-outil="gomme" title="Effacer un tracé">Gomme</button>
         <button id="b-feu" title="Centrer sur la fumée">Fumée</button>
@@ -79,11 +80,13 @@
   <div class="carton">
     <h1>Feu de forêt <span>Formation chef de groupe FDF3</span></h1>
     <p>Secteur réel de Salles (Caudos, Bilos, Lugos). Carte IGN, peuplements mesurés au LiDAR, carroyage et points d'eau du cartoguide DFCI. Le feu se propage selon le vent, la sécheresse et les peuplements (modèle de Rothermel calé sur le mémento SDIS 33).</p>
-    <p>Vous êtes chef de groupe (VLCG), engagé avec plusieurs UIFF (2 CCF + 1 VLHR, chef d'agrès FDF2). Vous déroulez : <b>DPIF, analyse de la ZI sur carte, message d'arrivée, reconnaissance, actions réflexes, messages et raisonnement tactique</b>.</p>
+    <p>Vous êtes chef de groupe (VLCG), engagé avec plusieurs UIFF (2 CCF + 1 VLHR, chef d'agrès FDF2). Vous déroulez : <b>analyse de la ZI sur carte, DPIF, message d'arrivée, reconnaissance, actions réflexes, messages et raisonnement tactique</b>.</p>
     <div class="choix">
       <label>Niveau <select id="c-niv"><option value="debutant">Débutant</option><option value="intermediaire" selected>Intermédiaire</option><option value="expert">Expert</option></select></label>
-      <label>Vent <select id="c-vent"><option value="alea">Aléatoire</option><option value="3">3 m/s</option><option value="5">5 m/s</option><option value="7">7 m/s</option><option value="10">10 m/s</option><option value="14">14 m/s</option></select></label>
-      <label>Sécheresse <select id="c-sech"><option value="forte">Forte</option><option value="moderee">Modérée</option><option value="extreme">Extrême</option></select></label>
+      <label>Vent du <select id="c-dir"><option value="alea">Aléatoire</option><option value="0">nord</option><option value="45">nord-est</option><option value="90">est</option><option value="135">sud-est</option><option value="180">sud</option><option value="225">sud-ouest</option><option value="270">ouest</option><option value="315">nord-ouest</option></select></label>
+      <label>Force <select id="c-vent"><option value="alea">Aléatoire</option><option value="3">3 m/s</option><option value="4">4 m/s</option><option value="5">5 m/s</option><option value="6">6 m/s</option><option value="7">7 m/s</option><option value="8">8 m/s</option><option value="10">10 m/s</option></select></label>
+      <label>Hygrométrie <select id="c-hygro"><option value="alea">Selon le risque</option><option value="15">15 %</option><option value="20">20 %</option><option value="25">25 %</option><option value="30">30 %</option><option value="35">35 %</option><option value="40">40 %</option><option value="50">50 %</option><option value="60">60 %</option></select></label>
+      <label>Risque <select id="c-risque"><option value="alea">Selon le niveau</option><option value="faible">Faible</option><option value="modere-bas">Modéré bas</option><option value="modere-haut">Modéré haut</option><option value="severe">Sévère</option><option value="tres-severe">Très sévère</option><option value="exceptionnel">Exceptionnel</option></select></label>
       <label>Départ du feu <select id="c-lieu"><option value="alea">N'importe où sur la carte</option></select></label>
     </div>
     <button class="go" id="go" disabled>Chargement de la carte…</button>
@@ -117,6 +120,7 @@
 <script src="src/fdf/regle.js"></script>
 <script src="src/fdf/parle.js"></script>
 <script src="src/fdf/avions.js"></script>
+<script src="src/fdf/peuplement.js"></script>
 <script src="src/fdf/jeu.js"></script>
 </body>
 </html>
