@@ -14,3 +14,8 @@ Page de jeu : `fdf.html`. Code : `src/fdf/` (feu.js propagation, carte.js carte 
 Rothermel (modèles Anderson / Scott & Burgan) par peuplement. Le facteur de calage `k` ramène la vitesse de tête à la règle du mémento (vent m/s × 100 = m/h) à 7 m/s en sécheresse forte (`node calage.js`).
 Forme elliptique (Anderson 1983), pente, passage en cimes (Van Wagner), sautes, intensité de Byram en kW/m.
 Essai : `node test_feu.js 7 225 60`.
+
+
+## Multijoueur
+
+Chef de groupe (hôte), chefs d'agrès UIFF et formateur : voir [MULTIJOUEUR.md](MULTIJOUEUR.md).

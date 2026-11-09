@@ -161,3 +161,32 @@ body:not(.accueil) .accueil-ecran { display: none; }
 .chat .pil { background: #3a3210; color: #ffe9a8; align-self: flex-start; }
 .chat .cos { background: #2d2350; color: #e6dcff; align-self: flex-end; }
 .chat small { display: block; opacity: .7; font: 500 10px var(--f-mono); }
+
+/* ---- multijoueur ---- */
+.carton { max-height: calc(100vh - 40px); overflow: auto; }
+.multi { margin: 18px 0 6px; border: 1px solid var(--ligne); border-radius: 6px; padding: 10px 14px; background: #101820; }
+.multi summary { cursor: pointer; font: 700 17px var(--f-disp); text-transform: uppercase; letter-spacing: .04em; color: var(--jaune); }
+.multi input, .multi select { background: #0d141c; border: 1px solid var(--ligne); border-radius: 4px; padding: 6px 8px; }
+.multi .large { display: grid; gap: 3px; font-size: 13px; color: var(--doux); margin-bottom: 10px; }
+.multi .large input { width: 100%; }
+.m-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.m-actions label { display: grid; gap: 3px; font-size: 13px; color: var(--doux); }
+.m-actions .ou { color: var(--muet); padding-bottom: 9px; }
+.m-etat { min-height: 1.4em; margin: 10px 0 0; color: var(--doux); }
+.m-etat.err, .partie small.err { color: #ff8a8a; }
+.btn:disabled { opacity: .45; cursor: wait; }
+.partie { display: flex; align-items: center; gap: 8px; background: var(--panel2); border: 1px solid var(--jaune); border-radius: 4px; padding: 4px 8px; white-space: nowrap; }
+.partie b { font: 700 15px var(--f-mono); color: var(--jaune); }
+.partie small { font-size: 11px; color: var(--doux); }
+.partie .btn.petit { margin-left: 0; }
+.unite .joueur { display: block; color: var(--jaune); font-size: 12px; margin-top: 2px; }
+.radio li.humain { border-left-color: var(--jaune); }
+.radio li.info, .radio li.situ { border-left-color: var(--orange); background: #241a0e; }
+.ordre-recu { border-left-color: var(--cmd); background: #1a1530; }
+.ordre-recu p { margin: 4px 0 8px; font-size: 14px; }
+.lig { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+#parole-de { background: #0d141c; border: 1px solid var(--jaune); border-radius: 4px; padding: 6px; }
+/* chef d'agres : une seule radio (DIR 654), pas de rythme ni d'onglet moyens */
+.role-ca .poste[data-poste="GRP 272"], .role-ca .poste[data-poste="Canal 18"], .role-ca .rythme, .role-ca [data-onglet="moyens"] { display: none; }
+.role-ca .radios { grid-template-columns: 1fr; }
+.client [data-outil="numero"] { }

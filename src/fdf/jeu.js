@@ -9,6 +9,7 @@
 (function () {
   'use strict';
   const $ = s => document.querySelector(s), $$ = s => Array.from(document.querySelectorAll(s));
+  const NET = window.NET || { mode: 'solo', cmd() {}, log() {}, joueurs: {} };
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const hm = t => { const m = Math.floor(t / 60); return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
@@ -69,8 +70,9 @@
     cvD = $('#dessus'); ctxD = cvD.getContext('2d');
     for (const l of carte.lieux.filter(l => l.k !== 'hameau').map(l => l.n).sort()) { const o = document.createElement('option'); o.value = l; o.textContent = 'Près de ' + l; $('#c-lieu').appendChild(o); }
     $('#go').disabled = false; $('#go').textContent = 'Prendre l\'alerte';
-    $('#go').onclick = demarre;
+    $('#go').onclick = () => demarre(confAccueil());
     bindUI();
+    if (window.NET) { NET.prepareAccueil(); NET.pret(); }
     window.addEventListener('resize', resize); resize();
   }
   function resize() { vue.resize(); cvD.width = vue.cv.width; cvD.height = vue.cv.height; G.dirtyFond = true; }
@@ -93,14 +95,16 @@
     return [6000, 5000];
   }
 
-  function demarre() {
-    const seed = (Date.now() & 0xffff) || 7, R = rng(seed);
-    const nivK = $('#c-niv').value, niv = NIVEAUX[nivK];
-    const vent = $('#c-vent').value === 'alea' ? niv.vents[Math.floor(R() * niv.vents.length)] : +$('#c-vent').value;
+  // parametres de la partie (identiques chez l'hote et les clients : meme graine, meme carte inventee)
+  function confAccueil() { return { seed: (Date.now() & 0xffff) || 7, niv: $('#c-niv').value, vent: $('#c-vent').value, sech: $('#c-sech').value, lieu: $('#c-lieu').value }; }
+  function demarre(conf) {
+    const seed = conf.seed, R = rng(seed);
+    const nivK = conf.niv, niv = NIVEAUX[nivK];
+    const vent = conf.vent === 'alea' ? niv.vents[Math.floor(R() * niv.vents.length)] : +conf.vent;
     const dirs = [270, 250, 225, 300, 315, 0, 45, 90, 200];
     const dir = dirs[Math.floor(R() * dirs.length)] + Math.round((R() - 0.5) * 20);
-    const sech = $('#c-sech').value;
-    const [ix, iy] = choisitDepart(R, $('#c-lieu').value);
+    const sech = conf.sech;
+    const [ix, iy] = choisitDepart(R, conf.lieu);
     Object.assign(G, {
       seed, R, vent, dir, sech, ix, iy, t: 0, heure0: (14 * 60 + 5 + Math.floor(R() * 90)) * 60, age: (niv.age[0] + Math.floor(R() * (niv.age[1] - niv.age[0]))) * 60, niv, nivK, mesMsgs: [],
       phase: 0, faites: {}, evals: [], radio: [], dessins: [], unites: [], pe: {}, reflexes: {}, cr: 0, msgs: {}, vu: new Uint8Array(carte.w * carte.h),
@@ -132,6 +136,7 @@
     vue.centre(G.cdg.x - 1500, G.cdg.y - 1500, 0.09);
     renderPhases(); renderPhase(); renderMoyens(); renderMemento(); renderTicket(); renderCrayons(); majHUD();
     API.carte = carte; AVIONS.init(API); DETRESSE.init();
+    G.conf = conf;
     enCours = true; last = performance.now(); requestAnimationFrame(boucle);
   }
 
@@ -163,9 +168,13 @@
   function boucle(now) {
     if (!enCours) return;
     const dt = Math.min(0.25, (now - last) / 1000); last = now;
-    if (rythme > 0 && !G.fin) {
-      G.acc = (G.acc || 0) + dt * rythme;
-      while (G.acc >= 2) { pas(2); G.acc -= 2; }
+    if (NET.mode === 'client') clientTick(now);
+    else {
+      if (rythme > 0 && !G.fin) {
+        G.acc = (G.acc || 0) + dt * rythme;
+        while (G.acc >= 2) { pas(2); G.acc -= 2; }
+      }
+      if (NET.mode === 'hote') publieHote(now);
     }
     dessine(now);
     requestAnimationFrame(boucle);
@@ -444,21 +453,30 @@
   function reflexe(k) { if (G.reflexes[k] == null && (G.tArrivee || G.cdgArrive)) { G.reflexes[k] = G.t; if (G.phase === 4) setPhase('reflexes'); } }
   function detecteReflexes(txt, canal) {
     const t = txt.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    if (canal === 'DIR 654') { if (!G.dir654) { G.dir654 = true; G.unites.filter(u => u.x != null && u.etat !== 'alerte').slice(0, 3).forEach(u => setTimeout(() => radio(u.ca, 'CDG Salles', 'Reçu 5 sur 5.', 'DIR 654'), 400)); } reflexe('radio'); }
+    if (canal === 'DIR 654') { if (!G.dir654) { G.dir654 = true; G.unites.filter(u => u.x != null && u.etat !== 'alerte' && !u.uid).slice(0, 3).forEach(u => setTimeout(() => radio(u.ca, 'CDG Salles', 'Reçu 5 sur 5.', 'DIR 654'), 400)); } reflexe('radio'); }
     if (/repli|cheminement|securite|3 ?p\b|autoprotection|zone refuge/.test(t)) reflexe('securite');
     if (/observat|guetteur|charlie 33/.test(t)) reflexe('observation');
     if (/gendarmerie|police|elus?\b|maire|enedis|rte\b|dfci/.test(t)) reflexe('autorites');
     if (/protection|defense|defendez|evacu|confin/.test(t)) reflexe('sensibles');
   }
-  function radio(de, a, txt, canal, cls) {
+  // o.humain : message dit par un joueur (chef d'agres, formateur)
+  function radio(de, a, txt, canal, cls, o) {
+    // engin tenu par un joueur : ce que le moteur lui fait « dire » devient une situation que lui seul voit
+    if (NET.mode === 'hote' && !(o && o.humain)) { const hu = G.unites.find(x => x.uid && x.ca === de); if (hu) { NET.log({ k: 'radio', r: { t: G.t, de: 'Situation', a: hu.label, txt, canal: 'situation', cls: cls || 'info', pour: hu.uid } }); return; } }
     if (de === 'CDG Salles') { detecteReflexes(txt, canal); if (window.DETRESSE && G.feu) DETRESSE.message(canal, txt); }
     if (de === 'CDG Salles' && canal === 'GRP 272') G.mesMsgs.push({ t: G.t, txt });
-    G.radio.push({ t: G.t, de, a, txt, canal, cls: cls || (de === 'CDG Salles' ? 'moi' : '') });
-    renderRadio(); const nb = $('#nb-radio'); if (nb && $('#o-radio').hidden) nb.textContent = '•';
-    if (cls === 'alerte' || cls === 'codis') info(`${de} : ${txt}`);
-    if (de !== 'CDG Salles' && de !== 'COS ' + CARTE.commune(G.ix, G.iy)) { const b = document.querySelector(`.poste[data-poste="${canal}"]`); if (b && (cls === 'alerte' || canal === 'Canal 18' || cls === 'codis')) b.classList.add('appel'); }
+    const r = { t: G.t, de, a, txt, canal, cls: cls || (de === 'CDG Salles' ? 'moi' : '') };
+    if (NET.mode === 'hote') NET.log({ k: 'radio', r });
+    recoitRadio(r, de !== 'CDG Salles' && de !== 'COS ' + CARTE.commune(G.ix, G.iy));
   }
-  function journal(txt) { G.radio.push({ t: G.t, de: 'Journal', a: '', txt, canal: 'journal', cls: '' }); renderRadio(); }
+  function recoitRadio(r, notifie) {
+    G.radio.push(r);
+    renderRadio(); const nb = $('#nb-radio'); if (nb && $('#o-radio').hidden) nb.textContent = '•';
+    const { de, txt, canal, cls } = r;
+    if (notifie && /alerte|codis|humain|info/.test(cls || '')) info(`${de === 'Situation' ? 'Situation' : de} : ${txt}`);
+    if (notifie) { const b = document.querySelector(`.poste[data-poste="${canal === 'situation' ? 'DIR 654' : canal}"]`); if (b && (cls === 'alerte' || canal === 'Canal 18' || cls === 'codis' || cls === 'humain' || cls === 'info')) b.classList.add('appel'); }
+  }
+  function journal(txt) { const r = { t: G.t, de: 'Journal', a: '', txt, canal: 'journal', cls: '' }; G.radio.push(r); renderRadio(); if (NET.mode === 'hote') NET.log({ k: 'radio', r: Object.assign({ pour: 'formateur' }, r) }); }
   function evalue(phase, item, detail, res, conseil) {
     G.evals.push({ phase, item, detail, res, conseil, t: G.t });
     if (G.niv && G.niv.retour) { G.retourBuf = (G.retourBuf || []).concat({ item, detail, res, conseil }); clearTimeout(evalue.k); evalue.k = setTimeout(montreRetour, 50); }
@@ -857,6 +875,7 @@
   const ORDRES = [['front', 'Attaque de front'], ['flancG', 'Attaque flanc gauche'], ['flancD', 'Attaque flanc droit'], ['percee', 'Percée de flanc'], ['ligne', 'Ligne d\'appui'], ['defense', 'Défense point sensible'], ['lisiere', 'Traitement des lisières'], ['eau', 'Au point d\'eau'], ['attente', 'Attente'], ['aller', 'Aller à…']];
   const LIB = Object.fromEntries(ORDRES);
   function renderMoyens() {
+    if (NET.mode === 'client') return renderMoyensClient();
     const el = $('#o-moyens'); if (!el) return;
     el.innerHTML = `<h2>Moyens</h2>
       <div class="unite"><header><b>CDG Salles (vous)</b><span class="st">${G.cdg && G.cdg.path ? 'en déplacement' : 'sur les lieux'}</span></header></div>
@@ -864,6 +883,7 @@
         <header><b>${esc(u.label)}</b><span class="st">${etatTxt(u)}</span></header>
         <div class="jauge" title="Eau"><i style="width:${Math.round(u.eau / u.cap * 100)}%"></i></div>
         <small class="aide">${Math.round(u.eau)} L ${u.Ivu && G.t - (u.actif || 0) < 30 ? '· intensité ' + Math.round(u.Ivu) + ' kW/m' : ''}</small>
+        ${u.joueur ? `<small class="joueur">Chef d'agrès : ${esc(u.joueur)} (joueur)${u.ordreRecu ? ' · ordre transmis, en attente d\'exécution' : ''}</small>` : ''}
         <div class="ordres">${u.x == null ? '' : ((TYPES_MOYENS[u.type] && TYPES_MOYENS[u.type].ordres) || ORDRES).map(([k, t]) => `<button data-ordre="${k}" data-u="${u.id}">${t}</button>`).join('')}</div>
       </div>`).join('')}
       ${AVIONS.panneau()}
@@ -885,16 +905,74 @@
     if (u.detresse) return 'DÉTRESSE';
     return LIB[u.mission] || 'engagé';
   }
+  // ordre depuis le panneau (chef de groupe, ou chef d'agres pour son engin) : collecte de la cible puis ordonne()
   function ordre(u, k) {
     if (!u) return;
     G.sel = u.id;
     if (k === 'aller') { G.outil = 'allerU'; cvD.classList.add('crayon'); info(`Cliquez la destination de ${u.label}.`); return; }
     if (k === 'ligne') { G.outil = 'ligne'; G.ligneEnCours = { pts: [], u: u.id }; cvD.classList.add('crayon'); info('Tracez la ligne d\'appui : cliquez ses deux extrémités, de préférence le long d\'une piste.'); return; }
     if (k === 'defense') { G.outil = 'defense'; cvD.classList.add('crayon'); info('Cliquez le point sensible à défendre.'); return; }
-    if (k === 'eau') { u.eau = Math.min(u.eau, Math.min(CCF_L, u.cap) - 1); gereEau(u); renderMoyens(); return; }
     if (k === 'alpha') { G.outil = 'alpha'; cvD.classList.add('crayon'); info(`Cliquez l'emplacement du point d'eau mobile (${u.label}), en bord de piste.`); return; }
     if (k === 'egl') { G.outil = 'egl'; cvD.classList.add('crayon'); info('Cliquez le bout de l\'établissement (300 m maximum depuis l\'engin).'); return; }
     if (k === 'bande') { G.outil = 'bande'; G.bandeEnCours = []; cvD.classList.add('crayon'); info('Cliquez le début puis la fin de la bande à tracer.'); return; }
+    ordonne(u, k, null);
+  }
+  // client (chef d'agres) : l'ordre part a l'hote ; hote (chef de groupe) : donneOrdre
+  function ordonne(u, k, cible) {
+    if (NET.mode === 'client') { NET.cmd({ type: 'ordre', u: u.id, k, cible }); info(`${LIBO(k)} : en cours.`); return; }
+    donneOrdre(u, k, cible);
+  }
+  const LIBO = k => ({ alpha: 'Point d\'eau mobile', egl: 'Établissement', bande: 'Bande', aller: 'Déplacement', eau: 'Au point d\'eau' }[k] || LIB[k] || k);
+  function texteOrdre(u, k, c) {
+    if (k === 'aller') return `${u.label}, faites mouvement vers ${CARTE.dfci(c[0], c[1])}, ${CARTE.lieuDit(c[0], c[1])}.`;
+    if (k === 'eau') return `${u.label}, allez faire le plein.`;
+    if (k === 'alpha') return `${u.label}, point d'eau mobile en ${CARTE.dfci(c[0], c[1])}.`;
+    if (k === 'egl') return `${u.label}, établissement de ${Math.round(Math.hypot(c[0] - u.x, c[1] - u.y))} m vers ${CARTE.dfci(c[0], c[1])}.`;
+    if (k === 'bande') return `${u.label}, bande de ${Math.round(Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]))} m.`;
+    if (k === 'defense') return `${u.label}, défense du point sensible ${CARTE.lieuDit(c[0], c[1])}, ${CARTE.dfci(c[0], c[1])}.`;
+    if (k === 'ligne') return `${u.label}, ligne d'appui de ${Math.round(Math.hypot(c[1][0] - c[0][0], c[1][1] - c[0][1]))} m entre ${CARTE.dfci(...c[0])} et ${CARTE.dfci(...c[1])}, ouverture des lances sur ordre.`;
+    return `${u.label}, ${(LIB[k] || k).toLowerCase()}${k === 'percee' ? ', progression dans le brûlé, cheminement de repli par l\'arrière' : ''}.`;
+  }
+  const canalCA = () => (G.dir654 ? 'DIR 654' : 'GRP 272');
+  // o.parCA : execute par le chef d'agres (joueur) ; o.voix : l'ordre a deja ete dit a la radio
+  function donneOrdre(u, k, cible, o) {
+    o = o || {};
+    if (!o.parCA) {
+      if (!o.voix) radio('CDG Salles', u.ca, texteOrdre(u, k, cible), canalCA());
+      if (k === 'defense') reflexe('sensibles');
+      if (k === 'ligne') { const len = Math.hypot(cible[1][0] - cible[0][0], cible[1][1] - cible[0][1]), nReq = Math.ceil(len / 40); if (nReq > 1) evalue('rto', 'Ligne d\'appui : dimensionnement', `${Math.round(len)} m tenus par 1 UIFF (mémento : ${nReq} UIFF pour ${Math.round(len)} m)`, 'ko', '1 UIFF / 40 m, 2 / 80 m, 3 / 120 m. Penser à équilibrer U3 / U12 / GPF.'); }
+      // engin tenu par un joueur : il recoit l'ordre et l'execute lui-meme
+      if (u.uid) { u.ordreRecu = { k, cible, t: G.t, txt: texteOrdre(u, k, cible) }; renderMoyens(); return; }
+    }
+    if (!execOrdre(u, k, cible)) return;
+    if (o.parCA) u.ordreRecu = null;
+    else if (!['aller', 'eau', 'alpha', 'egl', 'bande', 'ligne'].includes(k)) radio(u.ca, 'CDG Salles', 'Reçu.', canalCA());
+  }
+  // mecanique de l'ordre sur le moteur
+  function execOrdre(u, k, cible) {
+    if (u.x == null || u.etat === 'hors service') return false;
+    if (k === 'aller') { allerA(u, cible[0], cible[1], true); u.etat = u.mission ? 'engage' : 'transit'; renderMoyens(); return true; }
+    if (k === 'eau') { u.eau = Math.min(u.eau, Math.min(CCF_L, u.cap) - 1); gereEau(u); renderMoyens(); return true; }
+    if (k === 'alpha') {
+      const [x, y] = cible; allerA(u, x, y); u.etat = 'engage'; u.mission = 'alpha';
+      const id = 'GPF' + u.id; G.pe[id] = { n: id, x, y, moyen: u.label, debit: 60, actif: false, tActif: G.t + 1e9, gpf: u, mobile: true };
+      u.surPlace = () => { G.pe[id].actif = true; G.pe[id].tActif = G.t; radio(u.ca, 'CDG Salles', `${u.label} en place, point d'eau mobile opérationnel.`, 'DIR 654'); };
+      renderMoyens(); return true;
+    }
+    if (k === 'egl') {
+      const d = Math.hypot(cible[0] - u.x, cible[1] - u.y);
+      if (d > 300) { radio(u.ca, 'CDG Salles', `Établissement impossible : ${Math.round(d)} m, 300 m maximum depuis l'engin.`, 'DIR 654'); return false; }
+      u.cible = cible; u.mission = 'egl'; u.etat = 'engage'; u.path = null; renderMoyens(); return true;
+    }
+    if (k === 'bande') { u.bande = cible; u.av = 0; u.mission = 'bande'; u.etat = 'engage'; allerA(u, cible[0][0], cible[0][1], true); renderMoyens(); return true; }
+    if (k === 'defense') { u.mission = 'defense'; u.cible = cible; u.etat = 'engage'; allerA(u, cible[0], cible[1], true); renderMoyens(); return true; }
+    if (k === 'ligne') {
+      const L = { id: 'L' + (G.lignes.length + 1), pts: cible }; G.lignes.push(L);
+      const [a, b] = L.pts;
+      u.mission = 'ligne'; u.ligne = L.id; u.segLigne = L.pts; u.etat = 'engage'; allerA(u, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+      G.dirtyFond = true; renderMoyens(); return true;
+    }
+    // attaques, lisieres, attente
     if (u.tAttente != null && u.tEngage == null) {
       u.tEngage = G.t; const att = G.t - u.tAttente;
       if (u === G.unites[0] || !G.unites.some(x => x !== u && x.tEngage != null)) evalue('rto', 'Engagement de la 1re UIFF', `${Math.round(att / 60)} min d'attente au point d'engagement`, att <= 180 ? 'ok' : att <= 420 ? 'mi' : 'ko', 'Attaque initiale : la première UIFF s\'engage dès son arrivée, sans attendre la suivante.');
@@ -903,18 +981,16 @@
     u.mission = k; u.etat = 'engage'; u.alerteSecu = false;
     const cib = cibleFront(u);
     if (cib && k !== 'attente') { const r = allerA(u, cib[0], cib[1], true); if (r && r.L > 400) u.path = r.pts; else u.path = null; }
-    radio('CDG Salles', u.ca, `${u.label}, ${LIB[k].toLowerCase()}${k === 'percee' ? ', progression dans le brûlé, cheminement de repli par l\'arrière' : ''}.`, G.dir654 ? 'DIR 654' : 'GRP 272');
-    radio(u.ca, 'CDG Salles', 'Reçu.', G.dir654 ? 'DIR 654' : 'GRP 272');
-    if (!G.reflexes.securite && !u.avertiSecu) { u.avertiSecu = true; evalue('rto', 'Engagement sans consignes de sécurité', `${u.label} engagée à ${heure()} avant les réflexes sécurité`, 'mi', 'Règle des 3 P et cheminement de repli avant l\'engagement.'); }
+    if (!G.reflexes.securite && !u.avertiSecu && k !== 'attente') { u.avertiSecu = true; evalue('rto', 'Engagement sans consignes de sécurité', `${u.label} engagée à ${heure()} avant les réflexes sécurité`, 'mi', 'Règle des 3 P et cheminement de repli avant l\'engagement.'); }
     if (G.phase < 7) setPhase('rto');
-    G.dirtyFond = true; renderMoyens();
+    G.dirtyFond = true; renderMoyens(); return true;
   }
 
   // =============================================================== radios : voix -> texte, message libre
   const Reco = window.SpeechRecognition || window.webkitSpeechRecognition;
   let ecoute = null;
   function ouvreParole(canal, texte) {
-    $('#parole').hidden = false; $('#parole-canal').value = canal; $('#parole-txt').textContent = texte || ''; $('#parole-txt').focus();
+    $('#parole').hidden = false; $('#parole-canal').value = canal; $('#parole-txt').textContent = texte || ''; $('#parole-txt').focus(); majIdentites();
   }
   function parler(canal, btn) {
     if (ecoute) { ecoute.stop(); return; }
@@ -942,6 +1018,7 @@
     if (!txt) return;
     if (ecoute) ecoute.stop();
     $('#parole').hidden = true;
+    if (NET.mode === 'client') { if (NET.role === 'ca' && !maUnite()) { info('Choisissez d\'abord votre engin.'); return; } NET.cmd({ type: 'radio', canal, txt, de: $('#parole-de').value }); return; }
     const r = PARLE.analyse(txt, ctxParole());
     const dest = canal === 'GRP 272' ? 'CODIS 33' : (r.unite ? `CA UIFF ${r.unite}` : 'Chefs d\'agrès');
     if (canal === 'DIR 654') { radio('CDG Salles', dest, txt, canal); return ordreParole(r); }
@@ -962,27 +1039,27 @@
   function remplaceDernier(txt) { for (let i = G.radio.length - 1; i >= 0; i--) if (G.radio[i].de === 'CDG Salles' && G.radio[i].canal === 'GRP 272') { G.radio[i].txt = txt + '  [transcrit]'; break; } G.mesMsgs[G.mesMsgs.length - 1] = { t: G.t, txt }; renderRadio(); }
   function ordreParole(r) {
     const u = r.unite ? G.unites.filter(x => x.type === 'UIFF')[r.unite - 1] : null;
-    if (r.ordre === 'repli') { for (const v of (u ? [u] : G.unites.filter(x => x.x != null))) { v.mission = 'attente'; v.etat = 'engage'; if (G.ptEngagement) allerA(v, ...G.ptEngagement); radio(v.ca, 'CDG Salles', 'Reçu, repli.', 'DIR 654'); } return; }
-    if (!u) { if (r.ordre) radio('Chefs d\'agrès', 'CDG Salles', 'Pour quelle unité ?', 'DIR 654'); return; }
+    if (r.ordre === 'repli') { for (const v of (u ? [u] : G.unites.filter(x => x.x != null))) { if (v.uid) { v.ordreRecu = { k: 'attente', t: G.t, txt: 'Repli' }; continue; } v.mission = 'attente'; v.etat = 'engage'; if (G.ptEngagement) allerA(v, ...G.ptEngagement); radio(v.ca, 'CDG Salles', 'Reçu, repli.', 'DIR 654'); } return; }
+    if (!u) { if (r.ordre && !G.unites.some(x => x.uid)) radio('Chefs d\'agrès', 'CDG Salles', 'Pour quelle unité ?', 'DIR 654'); return; }
     if (u.x == null) { radio('CODIS 33', 'CDG Salles', `${u.label} n'est pas encore sur les lieux.`, 'GRP 272', 'codis'); return; }
     if (r.ordre === 'defense') {
       const l = r.lieuDit && carte.lieux.find(q => q.n === r.lieuDit);
       const cible = l ? l.p : (carte.sensibles.map(q => q.p).sort((a, b) => Math.hypot(a[0] - G.ix, a[1] - G.iy) - Math.hypot(b[0] - G.ix, b[1] - G.iy))[0]);
-      u.mission = 'defense'; u.cible = cible; u.etat = 'engage'; allerA(u, cible[0], cible[1], true); radio(u.ca, 'CDG Salles', 'Reçu, défense du point sensible.', 'DIR 654'); renderMoyens(); return;
+      donneOrdre(u, 'defense', cible, { voix: true }); if (!u.uid) radio(u.ca, 'CDG Salles', 'Reçu, défense du point sensible.', 'DIR 654'); return;
     }
-    if (r.ordre) ordre(u, r.ordre); else radio(u.ca, 'CDG Salles', 'Reçu.', 'DIR 654');
+    if (r.ordre && !['aller', 'ligne', 'alpha', 'egl', 'bande'].includes(r.ordre)) donneOrdre(u, r.ordre, null, { voix: true }); else if (!u.uid) radio(u.ca, 'CDG Salles', 'Reçu.', 'DIR 654');
   }
 
   // =============================================================== carte : interactions
   function bindUI() {
-    $$('.rythme button').forEach(b => b.onclick = () => { rythme = +b.dataset.v; $$('.rythme button').forEach(x => x.setAttribute('aria-pressed', x === b)); });
+    $$('.rythme button').forEach(b => b.onclick = () => { if (NET.mode === 'client') { NET.cmd({ type: 'rythme', v: +b.dataset.v }); return; } setRythme(+b.dataset.v); });
     $$('[data-fond]').forEach(b => b.onclick = () => { vue.fond = b.dataset.fond; $$('[data-fond]').forEach(x => x.setAttribute('aria-pressed', x === b)); G.dirtyFond = true; renderLegende(); });
     $$('[data-onglet]').forEach(b => b.onclick = () => { $$('[data-onglet]').forEach(x => x.setAttribute('aria-selected', x === b)); $$('.contenu').forEach(c => c.hidden = c.id !== 'o-' + b.dataset.onglet); if (b.dataset.onglet === 'radio') $('#nb-radio').textContent = ''; if (b.dataset.onglet === 'moyens') renderMoyens(); });
     $$('[data-outil]').forEach(b => b.onclick = () => { const o = b.dataset.outil; G.outil = G.outil === o ? null : o; G.crayon = null; renderCrayons(); $$('[data-outil]').forEach(x => x.setAttribute('aria-pressed', x.dataset.outil === G.outil)); cvD.classList.toggle('crayon', !!G.outil); G.mesure = null; });
     $('#b-feu').onclick = () => { if (!G.fumeeVue) { info('La fumée n\'est pas encore en vue : rapprochez-vous du lieu indiqué par le ticket.'); return; } const b = G.bilan || F.bilan(); const e = b.emprise; vue.centre((e[0] + e[2]) / 2 || G.ix, (e[1] + e[3]) / 2 || G.iy, Math.max(vue.s, 0.35)); G.dirtyFond = true; };
     $$('.poste[data-poste]').forEach(b => b.onclick = () => {
       b.classList.remove('appel');
-      if (b.dataset.poste === 'Canal 18') { AVIONS.ouvreChat(); return; }
+      if (b.dataset.poste === 'Canal 18' && NET.mode !== 'client') { AVIONS.ouvreChat(); return; }
       if (b.dataset.poste === 'DIR 654' && DETRESSE.actif()) DETRESSE.vu();
       parler(b.dataset.poste, b);
     });
@@ -992,6 +1069,7 @@
     $('#notes').addEventListener('focus', () => { document.execCommand('styleWithCSS', false, true); document.execCommand('foreColor', false, couleurNote); });
     $('#b-ticket').onclick = () => $('[data-onglet="ticket"]').click();
     $('#parole-ok').onclick = transmetLibre;
+    $('#parole-canal').onchange = majIdentites;
     $('#parole-x').onclick = () => { if (ecoute) ecoute.stop(); $('#parole').hidden = true; };
     $('#b-regle').onclick = () => {
       REGLE.on = !REGLE.on; $('#b-regle').setAttribute('aria-pressed', REGLE.on); $('#regle-p').hidden = !REGLE.on;
@@ -1006,7 +1084,7 @@
     cvD.addEventListener('pointerdown', e => {
       cvD.setPointerCapture(e.pointerId);
       const r = cvD.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top, x = vue.mx(px), y = vue.my(py);
-      if (e.button === 2) { allerCDG(x, y); return; }
+      if (e.button === 2) { if (NET.mode !== 'client') allerCDG(x, y); return; }
       if (REGLE.down(px, py)) return;
       if (G.crayon) { trait = { n: G.crayon, pts: [[x, y]] }; G.dessins.push(trait); return; }
       if (G.outil) { clicOutil(x, y); return; }
@@ -1039,39 +1117,25 @@
     if (o === 'aller') { allerCDG(x, y); finOutil(); return; }
     if (o === 'engagement') { G.ptEngagement = [x, y]; reflexe('engagement'); radio('CDG Salles', 'Chefs d\'agrès', `Point d'engagement des moyens : ${CARTE.dfci(x, y)}, ${CARTE.lieuDit(x, y)}.`, G.dir654 ? 'DIR 654' : 'GRP 272'); for (const u of G.unites) if (u.etat === 'transit') allerA(u, x, y); finOutil(); renderPhase(); return; }
     const u = G.unites.find(u => u.id === G.sel);
-    if (o === 'allerU' && u) { allerA(u, x, y, true); u.etat = u.mission ? 'engage' : 'transit'; finOutil(); return; }
-    if (o === 'alpha' && u) {
-      allerA(u, x, y); u.etat = 'engage'; u.mission = 'alpha';
-      const id = 'GPF' + u.id; G.pe[id] = { n: id, x, y, moyen: u.label, debit: 60, actif: false, tActif: G.t + 1e9, gpf: u, mobile: true };
-      u.surPlace = () => { G.pe[id].actif = true; G.pe[id].tActif = G.t; radio(u.ca, 'CDG Salles', `${u.label} en place, point d'eau mobile opérationnel.`, 'DIR 654'); };
-      radio('CDG Salles', u.ca, `${u.label}, point d'eau mobile en ${CARTE.dfci(x, y)}.`, 'DIR 654'); finOutil(); renderMoyens(); return;
-    }
+    if (o === 'allerU' && u) { ordonne(u, 'aller', [x, y]); finOutil(); return; }
+    if (o === 'alpha' && u) { ordonne(u, 'alpha', [x, y]); finOutil(); return; }
     if (o === 'egl' && u) {
       const d = Math.hypot(x - u.x, y - u.y);
       if (d > 300) { info(`Trop loin : ${Math.round(d)} m (300 m maximum). Rapprochez l'engin.`); return; }
-      u.cible = [x, y]; u.mission = 'egl'; u.etat = 'engage'; u.path = null;
-      radio('CDG Salles', u.ca, `${u.label}, établissement de ${Math.round(d)} m vers ${CARTE.dfci(x, y)}.`, 'DIR 654'); finOutil(); renderMoyens(); return;
+      ordonne(u, 'egl', [x, y]); finOutil(); return;
     }
     if (o === 'bande' && u) {
       G.bandeEnCours.push([x, y]);
-      if (G.bandeEnCours.length === 2) { u.bande = G.bandeEnCours; u.av = 0; u.mission = 'bande'; u.etat = 'engage'; allerA(u, u.bande[0][0], u.bande[0][1], true); radio('CDG Salles', u.ca, `${u.label}, bande de ${Math.round(Math.hypot(u.bande[1][0] - u.bande[0][0], u.bande[1][1] - u.bande[0][1]))} m.`, 'DIR 654'); G.bandeEnCours = null; finOutil(); renderMoyens(); }
+      if (G.bandeEnCours.length === 2) { const c = G.bandeEnCours; G.bandeEnCours = null; ordonne(u, 'bande', c); finOutil(); }
       return;
     }
-    if (o === 'defense' && u) { reflexe('sensibles'); u.mission = 'defense'; u.cible = [x, y]; u.etat = 'engage'; allerA(u, x, y, true); radio('CDG Salles', u.ca, `${u.label}, défense du point sensible ${CARTE.lieuDit(x, y)}.`, 'DIR 654'); finOutil(); renderMoyens(); return; }
-    if (o === 'ligne') {
+    if (o === 'defense' && u) { ordonne(u, 'defense', [x, y]); finOutil(); return; }
+    if (o === 'ligne' && u) {
       G.ligneEnCours.pts.push([x, y]);
-      if (G.ligneEnCours.pts.length === 2) {
-        const L = { id: 'L' + (G.lignes.length + 1), pts: G.ligneEnCours.pts }; G.lignes.push(L);
-        const [a, b] = L.pts, len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        u.mission = 'ligne'; u.ligne = L.id; u.segLigne = L.pts; u.etat = 'engage'; allerA(u, (a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
-        // autres UIFF deja sur cette ligne : chacune tient sa portion de 40 m
-        radio('CDG Salles', u.ca, `${u.label}, ligne d'appui de ${Math.round(len)} m entre ${CARTE.dfci(...a)} et ${CARTE.dfci(...b)}, ouverture des lances sur ordre.`, 'DIR 654');
-        const nReq = Math.ceil(len / 40);
-        if (nReq > 1) evalue('rto', 'Ligne d\'appui : dimensionnement', `${Math.round(len)} m tenus par 1 UIFF (mémento : ${nReq} UIFF pour ${Math.round(len)} m)`, 'ko', '1 UIFF / 40 m, 2 / 80 m, 3 / 120 m. Penser à équilibrer U3 / U12 / GPF.');
-        G.ligneEnCours = null; finOutil(); renderMoyens();
-      }
+      if (G.ligneEnCours.pts.length === 2) { const c = G.ligneEnCours.pts; G.ligneEnCours = null; ordonne(u, 'ligne', c); finOutil(); }
       return;
     }
+    if (o === 'saute') { NET.cmd({ type: 'saute', x, y }); info('Saute de feu injectée.'); finOutil(); return; }
     if (o === 'numero') {
       const n = G.crayonPrec || 6, k = G.dessins.filter(d => d.num && d.n === n).length + 1;
       G.dessins.push({ n, num: k, pts: [[x, y]] }); if (G.phase === 1) renderPhase(); return;
@@ -1159,7 +1223,7 @@
     REGLE.dessine(ctx, vue);
     AVIONS.dessine(ctx, vue);
     // dessins ZI
-    for (const d of G.dessins) {
+    for (const d of G.dessins.concat(NET.mode === 'client' ? MP.ds : [])) {
       if (d.num) { const c = CRAYONS[d.n - 1].c, X = sx(d.pts[0][0]), Y = sy(d.pts[0][1]); ctx.fillStyle = '#fff'; ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(X, Y, 11, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.fillStyle = c; ctx.font = '700 12px "IBM Plex Sans"'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(d.num, X, Y + 1); ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic'; continue; }
       if (d.texte) { const c = CRAYONS[d.n - 1].c; ctx.font = '700 14px "IBM Plex Sans"'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.strokeText(d.texte, sx(d.pts[0][0]), sy(d.pts[0][1])); ctx.fillStyle = c; ctx.fillText(d.texte, sx(d.pts[0][0]), sy(d.pts[0][1])); continue; }
       const c = CRAYONS[d.n - 1].c; ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
@@ -1176,7 +1240,9 @@
     // itineraires
     for (const o of [G.cdg, ...G.unites]) if (o.path) { ctx.strokeStyle = o === G.cdg ? 'rgba(154,114,255,.8)' : 'rgba(37,99,235,.6)'; ctx.lineWidth = 3; ctx.setLineDash([6, 5]); ctx.beginPath(); ctx.moveTo(sx(o.x), sy(o.y)); for (let i = o.pi; i < o.path.length; i++) ctx.lineTo(sx(o.path[i].x), sy(o.path[i].y)); ctx.stroke(); ctx.setLineDash([]); }
     // engins
-    for (const u of G.unites) if (u.x != null) engin(ctx, sx(u.x), sy(u.y), u.label.split(' ').slice(0, 2).join(' '), G.sel === u.id ? '#f08c2a' : '#e2373f', u);
+    for (const u of G.unites) if (u.x != null) engin(ctx, sx(u.x), sy(u.y), u.label.split(' ').slice(0, 2).join(' ') + (u.joueur ? ' · ' + u.joueur : ''), G.sel === u.id ? '#f08c2a' : u.detresse ? '#facc15' : '#e2373f', u);
+    const mu = NET.mode === 'client' && maUnite();
+    if (mu && mu.ordreRecu && mu.ordreRecu.cible) { const c = mu.ordreRecu.cible, pts = Array.isArray(c[0]) ? c : [c]; ctx.strokeStyle = '#9a72ff'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]); ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(sx(p[0]), sy(p[1])) : ctx.moveTo(sx(p[0]), sy(p[1]))); ctx.stroke(); ctx.setLineDash([]); pts.forEach(p => marqueur(ctx, sx(p[0]), sy(p[1]), '#9a72ff', 'OR')); }
     engin(ctx, sx(G.cdg.x), sy(G.cdg.y), 'CDG', '#9a72ff');
     // mesure
     if (G.mesure && G.mesure.length) { const a = G.mesure[0], b2 = G.mesure[1] || G.souris; if (b2) { ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(sx(a[0]), sy(a[1])); ctx.lineTo(sx(b2[0]), sy(b2[1])); ctx.stroke(); ctx.fillStyle = '#111'; ctx.font = '700 13px "IBM Plex Sans"'; ctx.fillText(Math.round(Math.hypot(b2[0] - a[0], b2[1] - a[1])) + ' m', sx(b2[0]) + 8, sy(b2[1])); } }
@@ -1201,6 +1267,7 @@
     $('#heure').textContent = heure();
     $('#meteo').textContent = `Vent ${G.vent} m/s du ${CARTE.rose(G.dir)} · ${G.sech}`;
     // arrivee du CDG au point a atteindre
+    if (NET.mode === 'client') return;
     if (G.phase >= 1 && !G.cdg.path && G.ptAtteindre && !G.cdgArrive) { G.cdgArrive = true; G.tArriveeCDG = G.t; if (G.phase >= 3) renderPhase(); info('Vous êtes arrivé au point à atteindre.'); }
     if (G.phase === 3 && G.cdgArrive && !$('#f-arr')) renderPhase();
     if (G.c33Prevu && G.t >= G.tC33 && !G.c33) { G.c33 = true; radio('Charlie 33', 'CDG Salles', 'Charlie 33 sur zone, je vous transmets la situation.', 'Air/Air'); observe(); }
@@ -1211,7 +1278,7 @@
     const can = ['tous', 'mes messages', ...new Set(G.radio.map(r => r.canal))];
     $('#filtres').innerHTML = can.map(c => `<button data-f="${c}" aria-pressed="${filtre === c}">${c}</button>`).join('');
     $$('#filtres button').forEach(b => b.onclick = () => { filtre = b.dataset.f; renderRadio(); });
-    $('#radio').innerHTML = G.radio.filter(r => filtre === 'tous' || r.canal === filtre || (filtre === 'mes messages' && r.de === 'CDG Salles')).slice().reverse().map(r => `<li class="${r.cls}"><small>${hm(G.heure0 + r.t)} · ${esc(r.canal)} · ${esc(r.de)}${r.a ? ' → ' + esc(r.a) : ''}</small>${esc(r.txt)}</li>`).join('');
+    $('#radio').innerHTML = G.radio.filter(r => filtre === 'tous' || r.canal === filtre || (filtre === 'mes messages' && r.de === (NET.mode === 'client' ? MP.moi() : 'CDG Salles'))).slice().reverse().map(r => `<li class="${r.cls}"><small>${hm(G.heure0 + r.t)} · ${esc(r.canal)} · ${esc(r.de)}${r.a ? ' → ' + esc(r.a) : ''}</small>${esc(r.txt)}</li>`).join('');
   }
   function renderTicket() {
     const t = G.ticket;
@@ -1257,9 +1324,272 @@ Transmissions : GRP 272 (CODIS), DIR 654 (chefs d'agrès), canal 18 (air-sol)</d
     $('#o-phase').innerHTML = `<h2>Débriefing · niveau ${G.niv.nom}</h2>
       <p>${ok} points acquis, ${mi} partiels, ${tot - ok - mi} à revoir. Surface brûlée : ${b.ha.toFixed(1)} ha. Feu ${G.etatFeu}${G.tFixe ? ', fixé à ' + hm(G.heure0 + G.tFixe) : ''}.</p>
       <p class="aide">Toute la surface brûlée est maintenant affichée sur la carte (y compris les zones non reconnues).</p>
-      ${parPhase}<h3>Éléments ajoutés pour cette partie</h3><p class="aide">${G.inv.sensibles.map(x => esc(x.n) + ' (' + CARTE.dfci(...x.p) + ')').join(', ')}. Lignes : ${G.inv.lignes.map(l => l.v).join(', ')}. Points d'eau : ${G.inv.pe.map(p => 'n° ' + p.n + ' ' + p.activation + (p.perenne ? '' : ' (non pérenne)')).join(', ')}.</p><h3>Actions réflexes</h3><div class="eval">${refl}</div>
+      ${parPhase}<h3>Éléments ajoutés pour cette partie</h3><p class="aide">${G.inv.sensibles.map(x => esc(x.n) + ' (' + CARTE.dfci(...x.p) + ')').join(', ')}. Lignes : ${G.inv.lignes.map(l => l.v).join(', ')}. Points d'eau : ${G.inv.pe.map(p => 'n° ' + p.n + ' ' + p.activation + (p.perenne ? '' : ' (non pérenne)')).join(', ')}.</p><h3>Actions réflexes</h3><div class="eval">${refl}</div>${G.unites.some(u => u.joueur) ? `<h3>Chefs d'agrès joueurs</h3><p class="aide">${G.unites.filter(u => u.joueur).map(u => esc(u.label) + ' : ' + esc(u.joueur)).join('<br>')}</p>` : ''}
       <div class="btns"><button class="btn" onclick="location.reload()">Nouvelle intervention</button></div>`;
     $$('[data-onglet]')[0].click();
+  }
+
+  // =============================================================== MULTIJOUEUR
+  // Hote : le navigateur du chef de groupe simule et publie. Clients : chefs d'agres et formateur.
+  const MP = { dernier: 0, dernier2: 0, envoi: null, sig2: '', e: null, e2: null, recu: 0, sig: '', choixManuel: false, ds: [] };
+  const R0 = v => Math.round(v);
+  function setRythme(v) { rythme = v; $$('.rythme button').forEach(x => x.setAttribute('aria-pressed', +x.dataset.v === v)); }
+
+  function lanceHote() {
+    const conf = confAccueil();
+    demarre(conf);
+    NET.T.set('conf', Object.assign({ hote: NET.nom, cree: Date.now() }, conf));
+    MP.envoi = new Uint8Array(carte.w * carte.h);
+    NET.T.onAdd('cmd', (k, c) => { NET.T.del('cmd/' + k); try { commande(c); } catch (e) { console.error('commande', e); } });
+    NET.T.on('joueurs', j => { NET.joueurs = j || {}; majJoueurs(); });
+    document.body.classList.add('multi');
+    badgePartie();
+  }
+  function majJoueurs() {
+    const J = NET.joueurs; let change = false;
+    for (const u of G.unites) {
+      const c = Object.entries(J).filter(([, j]) => j && j.role === 'ca' && j.unite === u.id).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0))[0];
+      const nu = c ? c[0] : null, nom = c ? c[1].nom : '';
+      if (nu !== (u.uid || null)) {
+        change = true;
+        if (nu) journal(`${u.label} : chef d'agrès ${nom} (joueur) aux commandes.`); else journal(`${u.label} : ${u.joueur || 'le joueur'} s'est déconnecté, l'engin repasse en automatique.`);
+        u.uid = nu; u.joueur = nom; if (!nu) u.ordreRecu = null;
+      }
+    }
+    if (change) renderMoyens();
+    badgePartie();
+  }
+  function badgePartie() {
+    const el = $('#partie'); if (!el || NET.mode === 'solo') return;
+    el.hidden = false;
+    const J = Object.values(NET.joueurs || {}).filter(Boolean);
+    if (NET.mode === 'hote') {
+      el.innerHTML = `<b>Partie ${esc(NET.code)}</b><small>${J.length - 1 > 0 ? (J.length - 1) + ' joueur(s) connecté(s)' : 'en attente de joueurs'}</small><button class="btn sec petit" id="b-lien" title="Copier le lien d'invitation">Inviter</button>`;
+      $('#b-lien').onclick = () => { const l = NET.lien(); (navigator.clipboard ? navigator.clipboard.writeText(l) : Promise.reject()).then(() => info('Lien copié : ' + l), () => info('Lien : ' + l)); };
+    } else {
+      const vieux = MP.recu && performance.now() - MP.recu > 6000;
+      el.innerHTML = `<b>Partie ${esc(NET.code)}</b><small class="${vieux ? 'err' : ''}">${vieux ? 'Chef de groupe en pause ou déconnecté' : NET.role === 'formateur' ? 'Formateur · ' + esc(NET.nom) : 'Chef d\'agrès · ' + esc(NET.nom)}</small>`;
+    }
+  }
+  // ------------------------------------------------------------- hote : publication
+  function publieHote(now) {
+    if (now - MP.dernier < 1000) return; MP.dernier = now;
+    const N = carte.w * carte.h, b = [], e = [], env = MP.envoi, ta = F.ta, ext = F.ext, t = F.t;
+    for (let i = 0; i < N; i++) {
+      const v = env[i]; if (v === 3) continue;
+      if (!(v & 1) && ta[i] <= t) { b.push(i, R0(ta[i])); env[i] |= 1; }
+      if (!(v & 2) && ext[i] === 1) { e.push(i); env[i] |= 2; }
+    }
+    if (b.length || e.length) NET.log({ k: 'feu', b: NET.b64(Int32Array.from(b)), e: NET.b64(Int32Array.from(e)) });
+    NET.T.set('etat', etatCompact());
+    if (now - MP.dernier2 > 4000) {
+      MP.dernier2 = now; majJoueurs();
+      const e2 = { ph: G.phase, ev: G.evals.slice(-80), rf: G.reflexes, ds: G.dessins.map(d => Object.assign({}, d, { pts: d.pts.map(p => [R0(p[0]), R0(p[1])]) })), ha: G.bilan ? +G.bilan.ha.toFixed(1) : 0, front: G.bilan ? R0(G.bilan.front) : 0 };
+      const sg = JSON.stringify(e2); if (sg !== MP.sig2) { MP.sig2 = sg; NET.T.set('etat2', e2); }
+    }
+  }
+  function etatCompact() {
+    const b = G.bilan;
+    return {
+      t: Math.round(G.t * 10) / 10, r: rythme, v: G.vent, d: G.dir, ef: G.etatFeu, fin: !!G.fin, ts: Date.now(),
+      cdg: [R0(G.cdg.x), R0(G.cdg.y)], pa: G.ptAtteindre ? G.ptAtteindre.map(R0) : null, pg: G.ptEngagement ? G.ptEngagement.map(R0) : null, arr: G.tArrivee || 0, d654: !!G.dir654,
+      em: b ? b.emprise.map(R0) : null, na: b ? b.actifs.length : 0,
+      u: G.unites.map(u => ({ id: u.id, type: u.type, label: u.label, ca: u.ca, cis: u.cis, x: u.x == null ? null : R0(u.x), y: u.y == null ? null : R0(u.y), eau: R0(u.eau), cap: u.cap, etat: u.etat, m: u.mission || '', td: u.tDispo, det: !!u.detresse, act: u.actif || 0, I: u.Ivu ? R0(u.Ivu) : 0, j: u.joueur || '', uid: u.uid || '', or: u.ordreRecu || null, pe: u.auPE || '', p: u.path ? u.path.slice(u.pi).map(q => [R0(q.x), R0(q.y)]) : null, ci: u.cible ? u.cible.map(R0) : null })),
+      pe: Object.values(G.pe).map(p => ({ n: p.n, x: R0(p.x), y: R0(p.y), moyen: p.moyen, debit: p.debit, actif: !!p.actif, tActif: p.tActif, reserve: !!p.reserve, volume: R0(p.volume || 0), mobile: !!p.mobile })),
+      lg: G.lignes.map(L => ({ id: L.id, pts: L.pts.map(q => q.map(R0)) })),
+      av: AVIONS.avions.map(a => ({ id: a.id, type: a.type, etat: a.etat, x: R0(a.x), y: R0(a.y), cap: a.cap || 0, largages: a.largages, tRetour: a.tRetour || 0, tFin: a.tFin || 0, ordre: !!a.ordre })),
+      al: AVIONS.largages.map(l => ({ a0: l.a0.map(R0), a1: l.a1.map(R0), t: l.t, retardant: !!l.retardant })),
+    };
+  }
+  // ------------------------------------------------------------- hote : commandes des clients
+  function commande(c) {
+    if (!c || !G.feu) return;
+    if (c.type === 'ordre') { const u = G.unites.find(x => x.id === c.u); if (!u || u.uid !== c.uid) return; donneOrdre(u, c.k, c.cible, { parCA: true }); return; }
+    if (c.type === 'radio') {
+      const txt = String(c.txt || '').slice(0, 800).trim(); if (!txt) return;
+      if (c.role === 'ca') { const u = G.unites.find(x => x.uid === c.uid); if (!u) return; radio(u.ca, c.canal === 'GRP 272' ? 'CODIS 33' : 'CDG Salles', txt, c.canal === 'GRP 272' ? 'GRP 272' : 'DIR 654', 'humain', { humain: true }); DETRESSE.messageCA(u, txt); return; }
+      if (c.role === 'formateur') {
+        if (c.canal === 'Canal 18') { AVIONS.dire(c.de, txt); return; }
+        radio(c.de || 'CODIS 33', 'CDG Salles', txt, c.canal, c.de === 'CODIS 33' ? 'codis' : 'humain', { humain: true }); return;
+      }
+      return;
+    }
+    if (c.role !== 'formateur') return;
+    if (c.type === 'rythme') setRythme(+c.v);
+    if (c.type === 'detresse') { if (!DETRESSE.force(c.u, c.k)) journal('Formateur : détresse impossible (engin pas sur le feu, ou détresse déjà en cours).'); else journal(`Formateur : détresse injectée sur ${c.u}.`); }
+    if (c.type === 'vent') {
+      G.vent = +c.vent; G.dir = +c.dir; F.setMeteo(G.vent, G.dir, G.sech); majHUD();
+      journal(`Formateur : vent ${G.vent} m/s du ${CARTE.rose(G.dir)}.`);
+      if (c.annonce) radio('CODIS 33', 'CDG Salles', `Information météo : le vent forcit et tourne, ${G.vent} m/s de secteur ${CARTE.rose(G.dir)}.`, 'GRP 272', 'codis');
+    }
+    if (c.type === 'saute') { const i = F.idx(c.x, c.y); if (i >= 0 && F.ta[i] > F.t) { F.allume(c.x, c.y, F.t); journal(`Formateur : saute de feu en ${CARTE.dfci(c.x, c.y)}.`); } }
+    if (c.type === 'fin' && !G.fin) termine();
+  }
+
+  // ------------------------------------------------------------- client : chef d'agres, formateur
+  function lanceClient(conf) {
+    demarre(conf);
+    G.radio = []; G.unites = []; G.mesMsgs = []; G.evals = []; G.sel = null;
+    F.ta.fill(Infinity); F.ext.fill(0); F.heap = [];
+    G.vu.fill(NET.role === 'formateur' ? 1 : 0); G.dirtyFeu = true;
+    AVIONS.avions.length = 0; G.fumeeVue = true;
+    document.body.classList.add('multi', 'client', 'role-' + NET.role);
+    const t0 = $('[data-onglet="phase"]'); t0.textContent = NET.role === 'formateur' ? 'Formateur' : 'Mon engin';
+    $('#parole-canal').innerHTML = NET.role === 'formateur' ? '<option>GRP 272</option><option>DIR 654</option><option>Canal 18</option>' : '<option>DIR 654</option><option>GRP 272</option>';
+    $('#o-phase').innerHTML = '<p class="aide">Connexion à la partie…</p>';
+    NET.T.onAdd('log', (k, o) => { try { recoitLog(o); } catch (e) { console.error('log', e); } });
+    NET.T.on('etat', e => { if (e) appliqueEtat(e); });
+    NET.T.on('etat2', e => { if (!e) return; MP.e2 = e; MP.ds = e.ds || []; if (NET.role === 'formateur') { G.phase = e.ph || 0; G.evals = e.ev || []; G.reflexes = e.rf || {}; renderPhases(); MP.sig = ''; } });
+    NET.T.on('joueurs', j => { NET.joueurs = j || {}; MP.sig = ''; badgePartie(); });
+    $('[data-onglet="phase"]').click();
+    badgePartie();
+  }
+  function maUnite() { return G.unites.find(u => u.id === NET.unite) || null; }
+  MP.moi = () => { const u = maUnite(); return NET.role === 'ca' ? (u ? u.ca : '') : ''; };
+  function recoitLog(o) {
+    if (o.k === 'feu') {
+      if (o.b) { const b = NET.deb64(o.b); for (let i = 0; i < b.length; i += 2) F.ta[b[i]] = b[i + 1]; }
+      if (o.e) { const e = NET.deb64(o.e); for (let i = 0; i < e.length; i++) F.ext[e[i]] = 1; }
+      G.dirtyFeu = true; return;
+    }
+    if (o.k === 'radio') {
+      const r = o.r, u = maUnite();
+      const voit = r.pour ? (r.pour === NET.uid || (r.pour === 'formateur' && NET.role === 'formateur'))
+        : NET.role === 'formateur' || r.canal === 'DIR 654' || (u && (r.a === u.ca || r.de === u.ca || /chefs d.agr/i.test(r.a)));
+      if (!voit) return;
+      if (r.pour === NET.uid) r.cls = r.cls === 'alerte' ? 'alerte situ' : 'info situ';
+      const recent = MP.e && r.t >= MP.e.t - 15;
+      recoitRadio(r, recent && r.de !== MP.moi());
+    }
+  }
+  function appliqueEtat(e) {
+    const prem = !MP.e; MP.e = e; MP.recu = performance.now();
+    G.t = e.t; F.t = G.age + G.t; setRythme(e.r);
+    if (e.v !== G.vent || e.d !== G.dir) { G.vent = e.v; G.dir = e.d; F.setMeteo(G.vent, G.dir, G.sech); }
+    G.etatFeu = e.ef; G.cdg.x = e.cdg[0]; G.cdg.y = e.cdg[1]; G.ptAtteindre = e.pa || null; G.ptEngagement = e.pg || null; G.tArrivee = e.arr || null; G.dir654 = !!e.d654;
+    G.bilan = e.em ? { emprise: e.em, actifs: { length: e.na || 0 } } : null;
+    G.unites = (e.u || []).map(q => Object.assign(G.unites.find(x => x.id === q.id) || {}, {
+      id: q.id, type: q.type, label: q.label, ca: q.ca, cis: q.cis, x: q.x ?? null, y: q.y ?? null, eau: q.eau || 0, cap: q.cap || 1, etat: q.etat, mission: q.m || null, tDispo: q.td || 0,
+      detresse: !!q.det, actif: q.act || 0, Ivu: q.I || 0, joueur: q.j || '', uid: q.uid || '', ordreRecu: q.or || null, auPE: q.pe || '', path: q.p ? q.p.map(([x, y]) => ({ x, y })) : null, pi: 0, cible: q.ci || null,
+    }));
+    G.pe = {}; for (const p of e.pe || []) G.pe[p.n] = p;
+    G.lignes = e.lg || [];
+    AVIONS.avions.length = 0; (e.av || []).forEach(a => AVIONS.avions.push(a));
+    AVIONS.largages.length = 0; (e.al || []).forEach(l => AVIONS.largages.push(l));
+    // chef d'agres : engin attribue (le premier arrive garde l'engin)
+    if (NET.role === 'ca') {
+      const u = maUnite();
+      if (u && u.uid && u.uid !== NET.uid) { NET.unite = null; NET.majPresence(); info(`${u.label} est déjà tenue par ${u.joueur}. Choisissez un autre engin.`); }
+      if (!NET.unite && !MP.choixManuel) { const libre = G.unites.find(x => x.type === 'UIFF' && !x.uid && x.etat !== 'hors service'); if (libre) choisitUnite(libre.id); }
+      G.sel = NET.unite;
+      observeClient();
+    }
+    if (prem && NET.role === 'formateur') { const b = G.bilan; vue.centre(b ? (b.emprise[0] + b.emprise[2]) / 2 : G.ix, b ? (b.emprise[1] + b.emprise[3]) / 2 : G.iy, 0.25); G.dirtyFond = true; }
+    if (e.fin && !G.fin) { G.fin = true; G.dirtyFeu = true; MP.sig = ''; }
+    majHUD(); renderClient(); badgePartie();
+    if (!$('#o-moyens').hidden) renderMoyens();
+  }
+  function choisitUnite(id) {
+    NET.unite = id; G.sel = id; NET.majPresence(); MP.sig = '';
+    const u = maUnite(); if (u && u.x != null) { vue.centre(u.x, u.y, Math.max(vue.s, 0.3)); G.dirtyFond = true; }
+  }
+  function observeClient() {
+    const u = maUnite(); if (!u || u.x == null) return;
+    const c = carte, R = Math.round(G.niv.vue / c.res), c0 = Math.floor(u.x / c.res), r0 = c.h - 1 - Math.floor(u.y / c.res);
+    for (let dr = -R; dr <= R; dr++) for (let dc = -R; dc <= R; dc++) {
+      if (dc * dc + dr * dr > R * R) continue; const cc = c0 + dc, rr = r0 + dr; if (cc < 0 || cc >= c.w || rr < 0 || rr >= c.h) continue;
+      if (!G.vu[rr * c.w + cc]) { G.vu[rr * c.w + cc] = 1; G.dirtyFeu = true; }
+    }
+  }
+  function clientTick(now) { if (Math.floor(now / 2000) !== MP.tb) { MP.tb = Math.floor(now / 2000); badgePartie(); } }
+
+  // panneaux des clients (re-rendus seulement si le contenu change)
+  function renderClient() {
+    if (NET.role === 'ca') return panneauCA();
+    return panneauFormateur();
+  }
+  function panneauCA() {
+    const u = maUnite(), el = $('#o-phase');
+    const sig = JSON.stringify([NET.unite, u && [u.etat, u.mission, Math.round(u.eau / 200), u.ordreRecu && u.ordreRecu.t, u.x == null, u.detresse], G.unites.map(x => x.id + x.uid), G.fin]);
+    if (sig === MP.sig) return; MP.sig = sig;
+    $('#phases').innerHTML = `<li class="encours">Chef d'agrès${u ? ' · ' + esc(u.label) : ''}</li>`;
+    if (G.fin) { el.innerHTML = '<h2>Exercice terminé</h2><p class="aide">Le chef de groupe a mis fin à l\'intervention. Débriefing avec le formateur.</p>'; return; }
+    if (!u) {
+      const libres = G.unites.filter(x => !x.uid && x.etat !== 'hors service');
+      el.innerHTML = `<h2>Choisissez votre engin</h2>${libres.length ? `<div class="ordres">${libres.map(x => `<button data-pris="${x.id}">${esc(x.label)}</button>`).join('')}</div>` : '<p class="aide">Aucun engin libre pour le moment. Les renforts demandés par le chef de groupe apparaîtront ici.</p>'}`;
+      $$('[data-pris]').forEach(b => b.onclick = () => { MP.choixManuel = true; choisitUnite(b.dataset.pris); });
+      return;
+    }
+    const or = u.ordreRecu, ordresU = (TYPES_MOYENS[u.type] && TYPES_MOYENS[u.type].ordres) || ORDRES;
+    el.innerHTML = `<h2>${esc(u.label)}</h2>
+      <div class="unite sel"><header><b>${esc(u.ca)} (vous)</b><span class="st">${etatTxt(u)}</span></header>
+        <div class="jauge" title="Eau"><i style="width:${Math.round(u.eau / u.cap * 100)}%"></i></div>
+        <small class="aide">${Math.round(u.eau)} L${u.x != null ? ' · ' + CARTE.dfci(u.x, u.y) + ' · ' + esc(CARTE.lieuDit(u.x, u.y)) : ''}</small></div>
+      ${or ? `<div class="note ordre-recu"><b>Ordre du chef de groupe</b> <small>${hm(G.heure0 + or.t)}</small><p>${esc(or.txt || LIBO(or.k))}</p><div class="btns"><button class="btn" id="ca-exec">Exécuter</button>${or.cible ? '<button class="btn sec" id="ca-voir">Voir sur la carte</button>' : ''}</div></div>` : ''}
+      ${u.x == null ? `<p class="aide">Départ du CIS de ${esc(u.cis)} à ${hm(G.heure0 + u.tDispo)}.</p>` : `<h3>Mes actions</h3><div class="ordres">${ordresU.map(([k, t]) => `<button data-mo="${k}">${t}</button>`).join('')}</div>`}
+      <p class="aide">Rendez compte au chef de groupe sur la <b>DIR 654</b> (radio verte en bas) : arrivée, position, eau, difficultés. Les lignes « Situation » de la radio ne sont visibles que par vous : c'est à vous de les transmettre.</p>
+      <div class="btns"><button class="btn sec" id="ca-centre">Centrer sur mon engin</button><button class="btn sec" id="ca-change">Changer d'engin</button></div>`;
+    if (or) {
+      $('#ca-exec').onclick = () => { NET.cmd({ type: 'ordre', u: u.id, k: or.k, cible: or.cible || null }); info('Ordre exécuté.'); };
+      if (or.cible) $('#ca-voir').onclick = () => { const c = Array.isArray(or.cible[0]) ? or.cible[0] : or.cible; vue.centre(c[0], c[1], Math.max(vue.s, 0.3)); G.dirtyFond = true; };
+    }
+    $$('[data-mo]').forEach(b => b.onclick = () => ordre(u, b.dataset.mo));
+    $('#ca-centre').onclick = () => { if (u.x != null) { vue.centre(u.x, u.y, Math.max(vue.s, 0.3)); G.dirtyFond = true; } };
+    $('#ca-change').onclick = () => { MP.choixManuel = true; NET.unite = null; NET.majPresence(); MP.sig = ''; panneauCA(); };
+  }
+  const DETR = [['encercle', 'CCF pris par le feu'], ['embourbe', 'CCF embourbé devant le feu'], ['blesse', 'Équipier blessé'], ['malaise', 'Coup de chaleur']];
+  function panneauFormateur() {
+    const el = $('#o-phase');
+    if (!el.querySelector('#f-inj')) {
+      el.innerHTML = `<h2>Formateur · partie ${esc(NET.code)}</h2>
+        <div id="f-joueurs"></div><div id="f-cdg"></div>
+        <h3>Injections</h3>
+        <div class="form" id="f-inj">
+          <label>Détresse <span class="lig"><select id="f-du"></select><select id="f-dk">${DETR.map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select><button class="btn sec" id="f-det">Déclencher</button></span></label>
+          <label>Vent <span class="lig"><select id="f-vf">${[3, 5, 7, 8, 10, 12, 14, 17, 20].map(v => `<option>${v}</option>`).join('')}</select> m/s du <select id="f-vd">${DIRS.map((d, i) => `<option value="${i * 45}">${d}</option>`).join('')}</select><button class="btn sec" id="f-vent">Appliquer</button></span></label>
+          <label class="ligne"><input type="checkbox" id="f-van" checked style="width:auto"> Annoncé au chef de groupe par le CODIS</label>
+          <div class="btns"><button class="btn sec" id="f-saute">Saute de feu (cliquer sur la carte)</button><button class="btn sec" id="f-fin">Terminer l'exercice</button></div>
+          <p class="aide">Pour jouer le CODIS, un pilote ou un engin non tenu par un joueur : radios en bas, choisissez l'identité dans la fenêtre de message.</p>
+        </div>
+        <h3>Évaluation du chef de groupe (en direct)</h3><div id="f-eval"></div>`;
+      $('#f-det').onclick = () => { if (!$('#f-du').value) { info('Aucun engin sur le feu.'); return; } NET.cmd({ type: 'detresse', u: $('#f-du').value, k: $('#f-dk').value }); };
+      $('#f-vent').onclick = () => NET.cmd({ type: 'vent', vent: +$('#f-vf').value, dir: +$('#f-vd').value, annonce: $('#f-van').checked });
+      $('#f-saute').onclick = () => { G.outil = 'saute'; cvD.classList.add('crayon'); info('Cliquez l\'emplacement de la saute de feu.'); };
+      $('#f-fin').onclick = () => { if (confirm('Terminer l\'exercice pour tous les joueurs ?')) NET.cmd({ type: 'fin' }); };
+      $('#f-vf').value = String(G.vent); $('#f-vd').value = String(Math.round(G.dir / 45) % 8 * 45);
+    }
+    const sur = G.unites.filter(u => u.x != null && u.etat !== 'hors service'), fdu = $('#f-du'), opts = sur.map(u => `<option value="${u.id}">${esc(u.label)}${u.joueur ? ' (' + esc(u.joueur) + ')' : ''}</option>`).join('');
+    if (fdu.dataset.o !== opts) { const v = fdu.value; fdu.innerHTML = opts; fdu.dataset.o = opts; if (v) fdu.value = v; }
+    const J = Object.values(NET.joueurs || {}).filter(Boolean);
+    $('#f-joueurs').innerHTML = `<h3>Joueurs</h3><p class="aide">${J.map(j => `${esc(j.nom)} : ${j.role === 'cdg' ? 'chef de groupe (hôte)' : j.role === 'formateur' ? 'formateur' : 'chef d\'agrès ' + esc((G.unites.find(u => u.id === j.unite) || {}).label || '(sans engin)')}`).join('<br>')}</p>`;
+    const e2 = MP.e2 || {};
+    $('#f-cdg').innerHTML = `<p class="aide">Phase du chef de groupe : <b>${PHASES[G.phase] ? PHASES[G.phase][1] : '—'}</b> · feu ${esc(G.etatFeu)} · ${e2.ha || 0} ha · front ${e2.front || 0} m · vent ${G.vent} m/s du ${CARTE.rose(G.dir)}${G.fin ? ' · <b>exercice terminé</b>' : ''}</p>`;
+    const sigE = G.evals.length + ':' + Object.keys(G.reflexes || {}).length;
+    if ($('#f-eval').dataset.s !== sigE) {
+      $('#f-eval').dataset.s = sigE;
+      $('#f-eval').innerHTML = `<div class="eval">${G.evals.slice().reverse().map(e => `<div class="${e.res}"><span>${esc(e.item)}<small>${hm(G.heure0 + (e.t || 0))} · ${esc(e.detail)}${e.conseil ? ' — ' + esc(e.conseil) : ''}</small></span></div>`).join('') || '<p class="aide">Rien pour l\'instant.</p>'}</div>
+        <h3>Actions réflexes relevées</h3><div class="eval">${REFLEXES.map(([k, t]) => `<div class="${G.reflexes[k] != null ? 'ok' : 'ko'}"><span>${esc(t)}<small>${G.reflexes[k] != null ? hm(G.heure0 + G.reflexes[k]) : 'pas encore'}</small></span></div>`).join('')}</div>`;
+    }
+  }
+  function renderMoyensClient() {
+    const el = $('#o-moyens');
+    el.innerHTML = `<h2>Moyens</h2>${G.unites.map(u => `<div class="unite" data-u="${u.id}"><header><b>${esc(u.label)}</b><span class="st">${etatTxt(u)}</span></header>
+      <div class="jauge"><i style="width:${Math.round(u.eau / u.cap * 100)}%"></i></div><small class="aide">${Math.round(u.eau)} L${u.joueur ? ' · joué par ' + esc(u.joueur) : ' · automatique'}${u.ordreRecu ? ' · ordre en attente : ' + esc(LIBO(u.ordreRecu.k)) : ''}</small></div>`).join('')}
+      <h3>Avions</h3><p class="aide">${AVIONS.avions.map(a => `${esc(a.id)} (${esc(a.type)}, ${esc(a.etat)}, ${a.largages || 0} largage(s))`).join('<br>') || 'aucun'}</p>
+      <h3>Points d'eau</h3><p class="aide">${Object.values(G.pe).filter(p => !p.reserve).map(p => `n° ${p.n} (${esc(p.moyen)}) : ${p.actif ? 'opérationnel' : 'en cours'}`).join('<br>') || 'aucun activé'}</p>`;
+    $$('#o-moyens .unite[data-u]').forEach(d => d.onclick = () => { const u = G.unites.find(x => x.id === d.dataset.u); if (u && u.x != null) { vue.centre(u.x, u.y); G.dirtyFond = true; } });
+  }
+  // identites possibles du formateur a la radio
+  function identites(canal) {
+    if (canal === 'GRP 272') return ['CODIS 33'];
+    if (canal === 'Canal 18') return AVIONS.avions.filter(a => a.etat !== 'engage' && a.etat !== 'parti').map(a => a.id).concat(['Charlie 33']);
+    return G.unites.filter(u => !u.uid && u.x != null).map(u => u.ca).concat(['Point Alpha', 'Chefs d\'agrès']);
+  }
+  function majIdentites() {
+    const s = $('#parole-de'); if (!s) return;
+    s.hidden = !(NET.mode === 'client' && NET.role === 'formateur');
+    if (s.hidden) return;
+    s.innerHTML = identites($('#parole-canal').value).map(i => `<option>${esc(i)}</option>`).join('');
   }
 
   // interface fournie aux modules avions et detresses
@@ -1276,6 +1606,6 @@ Transmissions : GRP 272 (CODIS), DIR 654 (chefs d'agrès), canal 18 (air-sol)</d
     },
   };
   // acces pour les essais automatiques
-  window.FDFJ = { vue: () => vue, pas, ordre, clicOutil, renderPhase, termine, setPhase, F: () => F };
+  window.FDFJ = { vue: () => vue, pas, ordre, clicOutil, renderPhase, termine, setPhase, F: () => F, lanceHote, lanceClient, MP };
   init();
 })();
