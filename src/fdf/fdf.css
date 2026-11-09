@@ -124,3 +124,19 @@ body:not(.accueil) .accueil-ecran { display: none; }
 .memo summary { cursor: pointer; color: var(--jaune); }
 .memo .calc { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
 .memo .calc input { width: 70px; background: #0d141c; border: 1px solid var(--ligne); border-radius: 3px; padding: 2px 4px; }
+.radios { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--ligne); background: #0f171f; }
+.poste { background: #1f2b39; border: 1px solid var(--ligne); border-radius: 6px; padding: 7px 10px; text-align: left; }
+.poste b { display: block; font: 700 15px var(--f-mono); }
+.poste small { color: var(--muet); font-size: 11px; }
+.poste.emet { background: var(--inc); border-color: var(--inc); animation: emet 1s infinite; }
+@keyframes emet { 50% { opacity: .75; } }
+.parole { padding: 8px 10px; border-top: 1px solid var(--ligne); background: #0f171f; }
+.transcrit { min-height: 54px; background: #0d141c; border: 1px solid var(--ligne); border-radius: 4px; padding: 6px 8px; font-size: 14px; }
+.transcrit:empty::before { content: 'Parlez ou écrivez votre message…'; color: var(--muet); }
+.parole select { background: #0d141c; border: 1px solid var(--ligne); border-radius: 4px; padding: 6px; }
+.regle-p { position: absolute; right: 10px; top: 60px; width: 290px; background: rgba(11,19,34,.94); border: 1px solid var(--ligne); border-radius: 6px; padding: 8px 10px; font-size: 12px; z-index: 4; }
+.regle-p label { display: flex; justify-content: space-between; gap: 6px; align-items: center; margin: 3px 0; }
+.regle-p input { width: 80px; background: #0d141c; border: 1px solid var(--ligne); border-radius: 3px; padding: 2px 4px; }
+.regle-p table { border-collapse: collapse; width: 100%; margin-top: 6px; font: 11px var(--f-mono); }
+.regle-p td, .regle-p th { border: 1px solid var(--ligne); padding: 1px 3px; text-align: right; }
+.saisie { position: absolute; z-index: 6; width: 220px; background: #fff; color: #111; border: 2px solid #111; border-radius: 3px; padding: 4px 6px; }

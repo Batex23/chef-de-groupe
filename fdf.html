@@ -28,12 +28,16 @@
       </div>
       <div class="og crayons" id="crayons" role="group" aria-label="Crayons de l'analyse ZI"></div>
       <div class="og" role="group" aria-label="Outils">
+        <button data-outil="texte" title="Écrire sur la carte (couleur du crayon choisi)">Texte</button>
+        <button id="b-regle" title="Règle feu de forêt virtuelle">Règle FDF</button>
         <button data-outil="mesure" title="Mesurer une distance">Mesure</button>
         <button data-outil="gomme" title="Effacer un tracé">Gomme</button>
         <button id="b-feu" title="Centrer sur la fumée">Fumée</button>
       </div>
     </div>
     <div class="legende" id="legende" hidden></div>
+    <div class="regle-p" id="regle-p" hidden></div>
+    <input class="saisie" id="saisie" type="text" hidden placeholder="Texte, puis Entrée">
     <div class="info" id="info" aria-live="polite"></div>
   </section>
 
@@ -48,6 +52,15 @@
     <div class="contenu" id="o-moyens" hidden></div>
     <div class="contenu" id="o-radio" hidden><div class="filtres" id="filtres"></div><ol class="radio" id="radio"></ol></div>
     <div class="contenu" id="o-memento" hidden></div>
+    <div class="radios" aria-label="Radios">
+      <button class="poste" data-poste="GRP 272"><b>GRP 272</b><small>CODIS</small></button>
+      <button class="poste" data-poste="DIR 654"><b>DIR 654</b><small>chefs d'agrès</small></button>
+      <button class="poste libre" id="b-libre" title="Message en texte libre"><b>Texte</b><small>message libre</small></button>
+    </div>
+    <div class="parole" id="parole" hidden>
+      <div id="parole-txt" class="transcrit" contenteditable="true" aria-label="Message (modifiable)"></div>
+      <div class="btns"><select id="parole-canal"><option>GRP 272</option><option>DIR 654</option></select><button class="btn" id="parole-ok">Transmettre</button><button class="btn sec" id="parole-x">Annuler</button></div>
+    </div>
   </aside>
 </main>
 
@@ -71,6 +84,8 @@
 <script src="src/fdf/feu.js"></script>
 <script src="src/fdf/carte.js"></script>
 <script src="src/fdf/inventaire.js"></script>
+<script src="src/fdf/regle.js"></script>
+<script src="src/fdf/parle.js"></script>
 <script src="src/fdf/jeu.js"></script>
 </body>
 </html>
