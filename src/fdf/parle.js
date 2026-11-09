@@ -37,8 +37,10 @@
     if (/chenillette/.test(t)) r.moyens.push('Chenillette');
     if (/\begl\b|grande longueur/.test(t)) r.moyens.push('Lot EGL');
     if (/bulldozer|\bbull\b/.test(t)) r.moyens.push('Bulldozer');
-    if (/canadair|pelican/.test(t)) r.moyens.push('Canadair');
-    if (/dash|milan/.test(t)) r.moyens.push('Dash 8');
+    const nb = re => { const q = t.match(re); return q && q[1] ? Math.min(6, +q[1]) : 1; };
+    if (/canadair|pelican/.test(t)) for (let k = nb(/(\d+) (canadairs?|pelicans?)/); k > 0; k--) r.moyens.push('Canadair');
+    if (/dash|milan/.test(t)) for (let k = nb(/(\d+) (dash|milans?)/); k > 0; k--) r.moyens.push('Dash 8');
+    if (/\bgpf\b/.test(t)) for (let k = nb(/(\d+) gpf/) - 1; k > 0; k--) r.moyens.push('GPF');
     if (/\babe\b|bombardier/.test(t) && !r.moyens.some(x => x === 'Canadair' || x === 'Dash 8')) r.moyens.push('Canadair');
     if (/charlie 33|helicoptere|helico/.test(t)) r.moyens.push('Charlie 33');
     if (/gendarmerie|police/.test(t)) r.autorites.push('Police ou gendarmerie');
