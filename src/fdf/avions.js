@@ -56,6 +56,8 @@
   };
 
   // ------------------------------------------------------------- conversation air-sol
+  // le formateur parle a la place d'un pilote
+  AV.dire = function (id, txt) { const a = AV.avions.find(x => x.id === id) || null; AV.chat.push({ de: id || 'Pilote', txt, t: A.G.t, pil: true }); A.radio(id || 'Pilote', 'COS ' + A.commune(), txt, 'Canal 18', '', { humain: true }); if (FEN.ouverte === 'air') rendChat(); return a; };
   AV.ouvreChat = function () {
     if (!AV.avions.some(a => a.etat !== 'engage' && a.etat !== 'parti')) { A.info('Aucun avion sur la fréquence air-sol pour le moment.'); return; }
     ouvreFen('air', rendChat);
@@ -270,10 +272,10 @@
 
   // ============================================================= appels de detresse (par la radio)
   const DT = {
-    encercle: { titre: 'CCF pris par le feu', mayday: true, msg: (u, c) => `Mayday, Mayday, Mayday ! De ${u.ca}, CCF pris par le feu en ${c}, saute de feu derrière nous, nous passons en autoprotection !`, gravite: 'Équipage brûlé, CCF détruit.' },
-    blesse: { titre: 'Sapeur-pompier blessé', msg: (u, c) => `Urgent, urgent ! De ${u.ca}, un équipier a chuté du CCF dans les souches en ${c}, suspicion de fracture de jambe.`, gravite: 'Évacuation retardée, état du blessé aggravé.' },
-    embourbe: { titre: 'CCF immobilisé devant le feu', msg: (u, c) => `Urgent ! De ${u.ca}, CCF embourbé dans une craste en ${c}, le front arrive sur nous à 150 mètres !`, gravite: 'CCF détruit, équipage évacué à pied in extremis.' },
-    malaise: { titre: 'Coup de chaleur', msg: (u, c) => `De ${u.ca}, un équipier fait un malaise en ${c}, coup de chaleur probable, il est confus.`, gravite: 'Aggravation, hospitalisation en réanimation.' },
+    encercle: { titre: 'CCF pris par le feu', mayday: true, situation: 'une saute de feu s\'est produite derrière vous, le feu vous encercle, vous passez en autoprotection (rideau d\'eau, cabine fermée)', msg: (u, c) => `Mayday, Mayday, Mayday ! De ${u.ca}, CCF pris par le feu en ${c}, saute de feu derrière nous, nous passons en autoprotection !`, gravite: 'Équipage brûlé, CCF détruit.' },
+    blesse: { titre: 'Sapeur-pompier blessé', situation: 'un équipier a chuté du CCF dans les souches, suspicion de fracture de jambe, il ne peut pas marcher', msg: (u, c) => `Urgent, urgent ! De ${u.ca}, un équipier a chuté du CCF dans les souches en ${c}, suspicion de fracture de jambe.`, gravite: 'Évacuation retardée, état du blessé aggravé.' },
+    embourbe: { titre: 'CCF immobilisé devant le feu', situation: 'votre CCF est embourbé dans une craste, le front arrive sur vous à 150 mètres', msg: (u, c) => `Urgent ! De ${u.ca}, CCF embourbé dans une craste en ${c}, le front arrive sur nous à 150 mètres !`, gravite: 'CCF détruit, équipage évacué à pied in extremis.' },
+    malaise: { titre: 'Coup de chaleur', situation: 'un équipier fait un malaise, coup de chaleur probable, il est confus', msg: (u, c) => `De ${u.ca}, un équipier fait un malaise en ${c}, coup de chaleur probable, il est confus.`, gravite: 'Aggravation, hospitalisation en réanimation.' },
   };
   const DE = { prevues: [], encours: null };
   DE.init = function () {
@@ -282,28 +284,42 @@
   };
   DE.pas = function () {
     const G = A.G;
-    if (DE.encours) { if (G.t - DE.encours.t > 6 * 60) conclut(); return; }
+    if (DE.encours) {
+      const d = DE.encours;
+      // engin tenu par un joueur : c'est a lui de passer le message
+      if (d.attenteCA) { if (G.t - d.t0 > 5 * 60) { A.evalue('rto', `Détresse non transmise (${d.u.label})`, `le chef d'agrès ${d.u.joueur || ''} n'a pas passé de message en 5 min`, 'ko', 'Chef d\'agrès : message Mayday ou urgent immédiat sur la DIR 654.'); d.u.detresse = false; DE.encours = null; } return; }
+      if (G.t - d.t > 6 * 60) conclut(); return;
+    }
     if (!DE.prevues.length || G.tEngage1 == null || G.t - G.tEngage1 < DE.prevues[0]) return;
     const engages = G.unites.filter(u => u.x != null && u.type === 'UIFF' && u.etat === 'engage' && u.mission && u.mission !== 'attente');
     if (!engages.length) return;
     DE.prevues.shift();
-    const u = engages[Math.floor(G.R() * engages.length)], ks = Object.keys(DT), k = ks[Math.floor(G.R() * ks.length)], c = A.dfci(u.x, u.y);
-    DE.encours = { k, u, t: G.t, c, ar: null, prot: null, codis: null };
+    const u = engages[Math.floor(G.R() * engages.length)], ks = Object.keys(DT);
+    lance(u, ks[Math.floor(G.R() * ks.length)]);
+  };
+  function lance(u, k) {
+    const G = A.G, c = A.dfci(u.x, u.y);
+    DE.encours = { k, u, t: G.t, t0: G.t, c, ar: null, prot: null, codis: null, attenteCA: !!u.uid };
     u.mission = 'attente'; u.detresse = true;
     if (k === 'encercle' || k === 'embourbe') A.F().traite(u.x, u.y, 25, 'mouille', 150);
-    A.radio(u.ca, 'CDG Salles', DT[k].msg(u, c), 'DIR 654', 'alerte');
-  };
+    if (u.uid) A.radio(u.ca, 'CDG Salles', `${DT[k].titre.toUpperCase()} en ${c} : ${DT[k].situation}. Passez immédiatement votre message à votre chef de groupe sur la DIR 654.`, 'DIR 654', 'alerte');
+    else A.radio(u.ca, 'CDG Salles', DT[k].msg(u, c), 'DIR 654', 'alerte');
+  }
+  // injection par le formateur
+  DE.force = function (id, k) { const u = A.G.unites.find(x => x.id === id && x.x != null && x.etat !== 'hors service'); if (!u || DE.encours) return false; lance(u, DT[k] ? k : 'blesse'); return true; };
+  // message d'un chef d'agres joueur : le chrono de prise en compte demarre a son appel
+  DE.messageCA = function (u) { const d = DE.encours; if (d && d.u === u && d.attenteCA) { d.attenteCA = false; d.t = A.G.t; } };
   DE.vu = function () {};
   // chaque message du COS est examine pendant une detresse
   DE.message = function (canal, txt) {
-    const d = DE.encours; if (!d) return;
+    const d = DE.encours; if (!d || d.attenteCA) return;
     const t = norm(txt), G = A.G, num = (d.u.label.match(/UIFF (\d+)/) || [])[1];
     if (canal === 'DIR 654' && d.ar == null && (/recu|compris|j arrive|on arrive|precisez|etat/.test(t) || (num && new RegExp(`uiff ?${num}\\b`).test(t)))) d.ar = G.t;
     if (canal === 'DIR 654' && d.prot == null && /protection|portez|degag|secours|rejoignez|appui|arrosez|ouvrez/.test(t)) {
       d.prot = G.t; if (d.ar == null) d.ar = G.t;
       const n = (t.match(/uiff ?(\d+)/g) || []).map(x => +x.replace(/\D/g, '')).find(x => String(x) !== num);
       const v = (n && G.unites.filter(x => x.type === 'UIFF')[n - 1]) || G.unites.filter(x => x !== d.u && x.x != null && x.type === 'UIFF' && !x.detresse).sort((a, b) => Math.hypot(a.x - d.u.x, a.y - d.u.y) - Math.hypot(b.x - d.u.x, b.y - d.u.y))[0];
-      if (v && v !== d.u && v.x != null) { v.mission = 'defense'; v.cible = [d.u.x, d.u.y]; v.etat = 'engage'; A.allerA(v, d.u.x, d.u.y, true); setTimeout(() => A.radio(v.ca, 'CDG Salles', `Reçu, je me porte en protection de ${d.u.label}.`, 'DIR 654'), 300); }
+      if (v && v !== d.u && v.x != null && !v.uid) { v.mission = 'defense'; v.cible = [d.u.x, d.u.y]; v.etat = 'engage'; A.allerA(v, d.u.x, d.u.y, true); setTimeout(() => A.radio(v.ca, 'CDG Salles', `Reçu, je me porte en protection de ${d.u.label}.`, 'DIR 654'), 300); }
     }
     if (canal === 'GRP 272' && d.codis == null && /mayday|urgent|detresse|blesse|vsav|smur|secours|accident|malaise|evacu/.test(t)) d.codis = G.t;
     if (d.ar != null && d.codis != null && (d.prot != null || d.k === 'malaise' || d.k === 'blesse')) conclut();

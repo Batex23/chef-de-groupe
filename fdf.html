@@ -12,6 +12,7 @@
 <header class="barre">
   <div class="marque">Feu de forêt <small>Chef de groupe FDF3 · Salles (33)</small></div>
   <ol class="phases" id="phases" aria-label="Phases de l'intervention"></ol>
+  <div class="partie" id="partie" hidden></div>
   <div class="horloge"><b id="heure">--:--</b><small id="meteo"></small></div>
   <div class="rythme" role="group" aria-label="Rythme du temps">
     <button data-v="0" title="Pause">II</button><button data-v="1" aria-pressed="true">×1</button><button data-v="2">×2</button><button data-v="4">×4</button><button data-v="8">×8</button>
@@ -63,7 +64,7 @@
     </div>
     <div class="parole" id="parole" hidden>
       <div id="parole-txt" class="transcrit" contenteditable="true" aria-label="Message (modifiable)"></div>
-      <div class="btns"><select id="parole-canal"><option>GRP 272</option><option>DIR 654</option></select><button class="btn" id="parole-ok">Transmettre</button><button class="btn sec" id="parole-x">Annuler</button><button class="btn sec" id="b-libre" title="Écrire au lieu de parler">Clavier</button></div>
+      <div class="btns"><select id="parole-canal"><option>GRP 272</option><option>DIR 654</option></select><select id="parole-de" hidden aria-label="Parler en tant que"></select><button class="btn" id="parole-ok">Transmettre</button><button class="btn sec" id="parole-x">Annuler</button><button class="btn sec" id="b-libre" title="Écrire au lieu de parler">Clavier</button></div>
     </div>
     <div class="brouillon">
       <div class="bbarre"><b>Brouillon</b>
@@ -86,11 +87,30 @@
       <label>Départ du feu <select id="c-lieu"><option value="alea">N'importe où sur la carte</option></select></label>
     </div>
     <button class="go" id="go" disabled>Chargement de la carte…</button>
+    <details class="multi" id="multi">
+      <summary>Multijoueur : chef de groupe, chefs d'agrès, formateur</summary>
+      <p class="aide">Le chef de groupe crée la partie (avec les réglages ci-dessus) : son ordinateur fait tourner la simulation. Les chefs d'agrès prennent chacun une UIFF et reçoivent ses ordres ; le formateur voit tout, joue le CODIS ou les pilotes et injecte des événements.</p>
+      <div class="choix">
+        <label>Votre nom <input id="m-nom" autocomplete="nickname" placeholder="ex. Sgt Martin"></label>
+        <label>Réseau <select id="m-net"><option value="firebase">Internet (plusieurs postes)</option><option value="local">Ce poste (plusieurs fenêtres)</option></select></label>
+      </div>
+      <label id="m-db-zone" class="large">Adresse de la base Firebase <input id="m-db" placeholder="https://votre-projet-default-rtdb.europe-west1.firebasedatabase.app"></label>
+      <div class="m-actions">
+        <button class="btn" id="m-creer" disabled>Créer une partie (chef de groupe)</button>
+        <span class="ou">ou</span>
+        <label>Code <input id="m-code" maxlength="4" placeholder="ABCD" style="width:80px;text-transform:uppercase"></label>
+        <label>Rôle <select id="m-role"><option value="ca">Chef d'agrès UIFF</option><option value="formateur">Formateur</option></select></label>
+        <button class="btn" id="m-rejoindre" disabled>Rejoindre</button>
+      </div>
+      <p class="m-etat" id="m-etat" aria-live="polite"></p>
+    </details>
     <p class="src">Sources : IGN (BD Forêt V2, BD TOPO, LiDAR HD, BD ORTHO), cartoguide DFCI SDIS 33, mémento FDF SDIS 33 (2025), fiches GOP 1.2.1 à 1.2.3.</p>
     <p><a href="index.html">← Retour aux autres scénarios</a></p>
   </div>
 </div>
 
+<script src="src/fdf/reseau-config.js"></script>
+<script src="src/fdf/reseau.js"></script>
 <script src="src/fdf/feu.js"></script>
 <script src="src/fdf/carte.js"></script>
 <script src="src/fdf/inventaire.js"></script>
