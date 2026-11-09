@@ -130,6 +130,7 @@
     document.body.classList.remove('accueil');
     vue.centre(G.cdg.x - 1500, G.cdg.y - 1500, 0.09);
     renderPhases(); renderPhase(); renderMoyens(); renderMemento(); renderCrayons(); majHUD();
+    API.carte = carte; AVIONS.init(API); DETRESSE.init();
     enCours = true; last = performance.now(); requestAnimationFrame(boucle);
   }
 
@@ -175,6 +176,7 @@
     F.avance(G.age + G.t);
     deplace(G.cdg, dt);
     for (const u of G.unites) majUnite(u, dt);
+    AVIONS.pas(dt); DETRESSE.pas();
     if (G.besoinReseed && G.t - (G.tReseed || 0) > 8) { F.reseed(); G.besoinReseed = false; G.tReseed = G.t; }
     if (Math.floor(G.t) % 10 === 0) observe();
     evenements();
@@ -238,6 +240,7 @@
 
   // =============================================================== unites
   function majUnite(u, dt) {
+    if (u.etat === 'hors service') return;
     if (u.etat === 'alerte' && G.t >= u.tDispo) {
       const cis = CIS.find(c => c.nom === u.cis);
       u.x = cis.p[0]; u.y = cis.p[1]; u.etat = 'transit';
@@ -776,11 +779,9 @@
   }
   function nbUIFF() { return G.unites.filter(u => u.type === 'UIFF').length; }
   function demandeAutres(liste) {
-    for (let m of liste) {
-      if (m === 'ABE') m = 'Canadair';
-      if (G.demandes.some(d => d.type === m) && m !== 'GPF') continue;
-      G.demandes.push({ type: m, n: 1, t: G.t + 3 * 60 });
-    }
+    const nb = {};
+    for (let m of liste) { if (m === 'ABE') m = 'Canadair'; nb[m] = (nb[m] || 0) + 1; }
+    for (const m in nb) G.demandes.push({ type: m, n: nb[m], t: G.t + 3 * 60 });
   }
   function frontPrevu() { const P = prevision(30), b = P.bilan(); return b.front; }
   FORM.cr = () => `<form class="form" id="f-msg">
@@ -846,11 +847,13 @@
         <small class="aide">${Math.round(u.eau)} L ${u.Ivu && G.t - (u.actif || 0) < 30 ? '· intensité ' + Math.round(u.Ivu) + ' kW/m' : ''}</small>
         <div class="ordres">${u.x == null ? '' : ((TYPES_MOYENS[u.type] && TYPES_MOYENS[u.type].ordres) || ORDRES).map(([k, t]) => `<button data-ordre="${k}" data-u="${u.id}">${t}</button>`).join('')}</div>
       </div>`).join('')}
+      ${AVIONS.panneau()}
       <h3>Points d'eau activés</h3>
       <p class="aide">${Object.values(G.pe).map(p => `n° ${p.n} (${p.moyen}) : ${p.actif ? 'opérationnel' : 'en cours, ' + hm(G.heure0 + p.tActif)}`).join('<br>') || 'aucun'}</p>
       <div class="btns"><select id="pe-sel">${carte.points_eau.map(p => `<option value="${p.n}">${peLabel(p)}</option>`).join('')}</select><select id="pe-moy">${opt(['MPF', 'MPR', 'MPRI', 'MPRGP'])}</select><button class="btn sec" id="b-pe">Demander l'activation</button></div>`;
     $$('#o-moyens [data-ordre]').forEach(b => b.onclick = () => ordre(G.unites.find(u => u.id === b.dataset.u), b.dataset.ordre));
     $$('#o-moyens .unite[data-u]').forEach(d => d.onclick = e => { if (e.target.tagName !== 'BUTTON') { G.sel = d.dataset.u; const u = G.unites.find(x => x.id === G.sel); if (u.x != null) vue.centre(u.x, u.y); G.dirtyFond = true; renderMoyens(); } });
+    AVIONS.bindPanneau(el);
     $('#b-pe').onclick = () => { const n = +$('#pe-sel').value, m = $('#pe-moy').value; radio('CDG Salles', 'CODIS 33', `Je demande l'activation du point d'eau ${n} au moyen d'une ${m}.`, 'GRP 272'); activePE(n, m); renderMoyens(); };
   }
   function etatTxt(u) {
@@ -859,6 +862,8 @@
     if (u.etat === 'attente') return 'au point d\'engagement';
     if (u.etat === 'vers_pe') return 'vers point d\'eau ' + u.auPE;
     if (u.etat === 'remplissage') return 'remplissage';
+    if (u.etat === 'hors service') return 'hors service';
+    if (u.detresse) return 'DÉTRESSE';
     return LIB[u.mission] || 'engagé';
   }
   function ordre(u, k) {
@@ -875,6 +880,7 @@
       u.tEngage = G.t; const att = G.t - u.tAttente;
       if (u === G.unites[0] || !G.unites.some(x => x !== u && x.tEngage != null)) evalue('rto', 'Engagement de la 1re UIFF', `${Math.round(att / 60)} min d'attente au point d'engagement`, att <= 180 ? 'ok' : att <= 420 ? 'mi' : 'ko', 'Attaque initiale : la première UIFF s\'engage dès son arrivée, sans attendre la suivante.');
     }
+    if (G.tEngage1 == null && k !== 'attente') G.tEngage1 = G.t;
     u.mission = k; u.etat = 'engage'; u.alerteSecu = false;
     const cib = cibleFront(u);
     if (cib && k !== 'attente') { const r = allerA(u, cib[0], cib[1], true); if (r && r.L > 400) u.path = r.pts; else u.path = null; }
@@ -1036,6 +1042,8 @@
       G.posTexte = [x, y]; G.crayonTexte = G.crayonPrec || 4;
       inp.style.left = (vue.sx(x)) + 'px'; inp.style.top = (vue.sy(y) - 14) + 'px'; inp.hidden = false; inp.focus(); return;
     }
+    if (o === 'largage') { if (AVIONS.clic(x, y)) finOutil(); return; }
+    if (o === 'largage2') { AVIONS.clic2(x, y); return; }
     if (o === 'mesure') { if (!G.mesure || G.mesure.length === 2) G.mesure = [[x, y]]; else { G.mesure.push([x, y]); const [a, b] = G.mesure; info(`Distance : ${Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]))} m, cap ${Math.round(CARTE.cap(b[0] - a[0], b[1] - a[1]))}°.`); } return; }
     if (o === 'gomme') { let bi = -1, bd = 40 / vue.s; G.dessins.forEach((d, i) => d.pts.forEach(p => { const dd = Math.hypot(p[0] - x, p[1] - y); if (dd < bd) { bd = dd; bi = i; } })); if (bi >= 0) G.dessins.splice(bi, 1); return; }
   }
@@ -1110,6 +1118,7 @@
       }
     }
     REGLE.dessine(ctx, vue);
+    AVIONS.dessine(ctx, vue);
     // dessins ZI
     for (const d of G.dessins) {
       if (d.texte) { const c = CRAYONS[d.n - 1].c; ctx.font = '700 14px "IBM Plex Sans"'; ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.strokeText(d.texte, sx(d.pts[0][0]), sy(d.pts[0][1])); ctx.fillStyle = c; ctx.fillText(d.texte, sx(d.pts[0][0]), sy(d.pts[0][1])); continue; }
@@ -1199,6 +1208,19 @@
     $$('[data-onglet]')[0].click();
   }
 
+  // interface fournie aux modules avions et detresses
+  const API = {
+    G, carte: null, F: () => F, radio: (...a) => radio(...a), evalue: (...a) => evalue(...a), info: t => info(t),
+    outil: (o, msg) => { G.outil = o; cvD.classList.add('crayon'); info(msg); }, finOutil: () => finOutil(),
+    allerA: (...a) => allerA(...a), dfci: (x, y) => CARTE.dfci(x, y), cap: (dx, dy) => CARTE.cap(dx, dy), hm: t => hm(G.heure0 + t),
+    commune: () => CARTE.commune(G.ix, G.iy),
+    obstaclesProches: r => {
+      const out = [], b = G.bilan || F.bilan(), cx = b.actifs.length ? (b.emprise[0] + b.emprise[2]) / 2 : G.ix, cy = b.actifs.length ? (b.emprise[1] + b.emprise[3]) / 2 : G.iy;
+      for (const e of carte.elec) if (e.p.some((a, i) => i < e.p.length - 1 && distSeg([cx, cy], a, e.p[i + 1]) < r)) out.push({ n: `Ligne électrique ${e.v || ''} (${CARTE.dfci(...e.p[0])} → ${CARTE.dfci(...e.p[e.p.length - 1])})`, danger: true });
+      for (const s2 of carte.sensibles) if (s2.obstacle && Math.hypot(s2.p[0] - cx, s2.p[1] - cy) < r) out.push({ n: `${s2.n} en ${CARTE.dfci(...s2.p)}`, danger: true });
+      return out;
+    },
+  };
   // acces pour les essais automatiques
   window.FDFJ = { vue: () => vue, pas, ordre, clicOutil, renderPhase, termine, setPhase, F: () => F };
   init();
