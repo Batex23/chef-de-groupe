@@ -120,3 +120,7 @@ body:not(.accueil) .accueil-ecran { display: none; }
   .phases { display: none; }
   .marque small { display: none; }
 }
+.memo { border: 1px dashed var(--ligne); border-radius: 5px; padding: 4px 8px; font-size: 13px; }
+.memo summary { cursor: pointer; color: var(--jaune); }
+.memo .calc { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
+.memo .calc input { width: 70px; background: #0d141c; border: 1px solid var(--ligne); border-radius: 3px; padding: 2px 4px; }

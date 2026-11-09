@@ -57,6 +57,7 @@
     <p>Secteur réel de Salles (Caudos, Bilos, Lugos). Carte IGN, peuplements mesurés au LiDAR, carroyage et points d'eau du cartoguide DFCI. Le feu se propage selon le vent, la sécheresse et les peuplements (modèle de Rothermel calé sur le mémento SDIS 33).</p>
     <p>Vous êtes chef de groupe (VLCG), engagé avec plusieurs UIFF (2 CCF + 1 VLHR, chef d'agrès FDF2). Vous déroulez : <b>DPIF, analyse de la ZI sur carte, message d'arrivée, reconnaissance, actions réflexes, messages et raisonnement tactique</b>.</p>
     <div class="choix">
+      <label>Niveau <select id="c-niv"><option value="debutant">Débutant</option><option value="intermediaire" selected>Intermédiaire</option><option value="expert">Expert</option></select></label>
       <label>Vent <select id="c-vent"><option value="alea">Aléatoire</option><option value="3">3 m/s</option><option value="5">5 m/s</option><option value="7">7 m/s</option><option value="10">10 m/s</option><option value="14">14 m/s</option></select></label>
       <label>Sécheresse <select id="c-sech"><option value="forte">Forte</option><option value="moderee">Modérée</option><option value="extreme">Extrême</option></select></label>
       <label>Départ du feu <select id="c-lieu"><option value="alea">N'importe où sur la carte</option></select></label>
@@ -69,6 +70,7 @@
 
 <script src="src/fdf/feu.js"></script>
 <script src="src/fdf/carte.js"></script>
+<script src="src/fdf/inventaire.js"></script>
 <script src="src/fdf/jeu.js"></script>
 </body>
 </html>
