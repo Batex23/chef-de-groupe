@@ -4,3 +4,5 @@ node_modules/
 !assets/**/*.png
 fds/sortie*/
 .DS_Store
+__pycache__/
+data/fdf/salles/_apercu_combustibles.png
