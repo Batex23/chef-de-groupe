@@ -202,6 +202,7 @@
         ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.strokeText(t, x, y); ctx.fillStyle = '#2a1f14'; ctx.fillText(t, x, y);
       }
     }
+    if (window.INV) INV.dessine(ctx, this);
     // points d'eau du cartoguide
     if (this.couches.pe) for (const q of c.points_eau) CARTE.symbolePE(ctx, sx(q.p[0]), sy(q.p[1]), q, Math.max(0.7, Math.min(1.4, s * 4)));
   };
@@ -213,10 +214,16 @@
     if (q.forme === 'triangle') { ctx.moveTo(0, -11); ctx.lineTo(9, 5); ctx.lineTo(-9, 5); ctx.closePath(); }
     else if (q.forme === 'losange') { ctx.moveTo(0, -10); ctx.lineTo(10, 0); ctx.lineTo(0, 10); ctx.lineTo(-10, 0); ctx.closePath(); }
     else if (q.forme === 'rond') ctx.arc(0, 0, 8.5, 0, Math.PI * 2);
-    if (q.forme !== 'point') { ctx.fill(); ctx.stroke(); }
+    if (q.forme !== 'point') {
+      // rond plein bleu : reserve perenne ; a moitie : activation incertaine (legende cartoguide)
+      if (q.forme === 'rond' && q.perenne != null) { ctx.fillStyle = 'rgba(42,109,240,.85)'; ctx.fill(); if (!q.perenne) { ctx.save(); ctx.clip(); ctx.fillStyle = '#fff'; ctx.fillRect(-12, 0, 24, 12); ctx.restore(); } }
+      else ctx.fill();
+      ctx.stroke();
+    }
     ctx.fillStyle = '#e8202a'; ctx.beginPath(); ctx.arc(0, 0, 4.2, 0, Math.PI * 2); ctx.fill();
     ctx.font = '700 12px "IBM Plex Sans", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.strokeText(q.n, 0, 9); ctx.fillStyle = '#e8202a'; ctx.fillText(q.n, 0, 9);
+    if (q.activation) { ctx.font = '600 9px "IBM Plex Sans", sans-serif'; ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.strokeText(q.activation, 0, 22); ctx.fillStyle = '#1d4ed8'; ctx.fillText(q.activation, 0, 22); }
     if (actif) { ctx.strokeStyle = '#2a6df0'; ctx.lineWidth = 2; ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.stroke(); }
     ctx.restore();
   };
