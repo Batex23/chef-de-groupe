@@ -48,6 +48,16 @@
         }
       }
     }
+    // lieux-dits complementaires (toponymie landaise) dans les zones sans repere
+    const NOMS = ['Lande de Peyrot', 'Le Tuc', 'Haut-Barrail', 'La Craste Neuve', 'Pinada de Lartigue', 'Les Arrouillats', 'Capbern', 'Lagunot', 'Hourcade', 'Le Pas de Lou Pin', 'Darrigade', 'La Lagune Ronde', 'Lande de Tastet', 'Le Sablot', 'Les Esteys', 'Bos de Mounet', 'Le Gourguet', 'La Pièce du Moulin', 'Lande du Broc', 'Cap de Lande', 'Le Lugan', 'Las Hountas', 'Pey de Hourc', 'La Cabanasse Vieille', 'Le Bernet', 'Lande de Pujeau', 'Les Tachoueres', 'Le Grand Bos', 'La Pinède de Bordessoules', 'Le Courneau'];
+    const nld = niveau === 'debutant' ? 30 : 22;
+    const pris = new Set(c.lieux.map(l => l.n));
+    for (let k = 0, e = 0; k < nld && e < 3000; e++) {
+      const x = 500 + R() * (c.W - 1000), y = 500 + R() * (c.H - 1000);
+      if (c.lieux.some(l => Math.hypot(l.p[0] - x, l.p[1] - y) < 750)) continue;
+      const n = NOMS.filter(m => !pris.has(m))[0]; if (!n) break;
+      pris.add(n); c.lieux.push({ n, k: 'lieu-dit', p: [x, y], invente: true }); k++;
+    }
     // ligne HTA inventee (obstacle pour les ABE) : 2 a 4 km, pylones tous les 200 m
     const nl = niveau === 'debutant' ? 1 : 1 + Math.floor(R() * 2);
     for (let k = 0; k < nl; k++) {
@@ -63,11 +73,10 @@
     out.sensibles.push(relais); c.sensibles.push(relais);
     // points d'eau complementaires (numerotes 200 et plus)
     const npe = niveau === 'expert' ? 1 + Math.floor(R() * 2) : 2 + Math.floor(R() * 3);
-    const MOY = ['MPF', 'MPRI', 'MPF', 'MPRGP'];
     for (let k = 0; k < npe; k++) {
       const q2 = pisteProche(c, R, r => r.k === 'dfci' || r.k === 'piste');
-      const forme = R() < 0.5 ? 'rond' : 'triangle';
-      const pe = { n: 200 + Math.floor(R() * 90), forme, p: [q2.x + q2.nx * 12, q2.y + q2.ny * 12], activation: forme === 'rond' ? 'MPF' : MOY[Math.floor(R() * MOY.length)], perenne: R() > 0.25, invente: true };
+      const forme = ['rond', 'triangle', 'triangle', 'losange'][Math.floor(R() * 4)];
+      const pe = { n: 200 + Math.floor(R() * 90), forme, p: [q2.x + q2.nx * 12, q2.y + q2.ny * 12], perenne: forme === 'triangle' ? R() > 0.35 : true, invente: true };
       pe.dfci = CARTE.dfci(pe.p[0], pe.p[1]);
       out.pe.push(pe); c.points_eau.push(pe);
     }

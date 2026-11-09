@@ -207,6 +207,14 @@
     if (this.couches.pe) for (const q of c.points_eau) CARTE.symbolePE(ctx, sx(q.p[0]), sy(q.p[1]), q, Math.max(0.7, Math.min(1.4, s * 4)));
   };
 
+  // legende du cartoguide SDIS 33 : rond = reserve 60 m3 ; triangle plein = point d'eau perenne a armer avec une MPR,
+  // triangle a moitie = non perenne ; losange = puits fore (MPRI)
+  CARTE.typePE = function (q) {
+    if (q.forme === 'rond') return { nom: 'Réserve 60 m³', moyen: 'aspiration', volume: 60000, debit: 60 };
+    if (q.forme === 'triangle') return { nom: q.perenne === false ? 'Point d\'eau non pérenne (MPR)' : 'Point d\'eau pérenne (MPR)', moyen: 'MPR', debit: 55, incertain: q.perenne === false };
+    if (q.forme === 'losange') return { nom: 'Puits foré (MPRI)', moyen: 'MPRI', debit: 55 };
+    return { nom: 'Point d\'eau', moyen: 'MPF', debit: 30 };
+  };
   CARTE.symbolePE = function (ctx, x, y, q, k, actif) {
     ctx.save(); ctx.translate(x, y); ctx.scale(k, k);
     ctx.strokeStyle = '#2a6df0'; ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2.5;
@@ -216,14 +224,15 @@
     else if (q.forme === 'rond') ctx.arc(0, 0, 8.5, 0, Math.PI * 2);
     if (q.forme !== 'point') {
       // rond plein bleu : reserve perenne ; a moitie : activation incertaine (legende cartoguide)
-      if (q.forme === 'rond' && q.perenne != null) { ctx.fillStyle = 'rgba(42,109,240,.85)'; ctx.fill(); if (!q.perenne) { ctx.save(); ctx.clip(); ctx.fillStyle = '#fff'; ctx.fillRect(-12, 0, 24, 12); ctx.restore(); } }
+      if (q.forme === 'rond' || q.forme === 'triangle') { ctx.fillStyle = 'rgba(42,109,240,.85)'; ctx.fill(); if (q.forme === 'triangle' && q.perenne === false) { ctx.save(); ctx.clip(); ctx.fillStyle = '#fff'; ctx.fillRect(-12, -3, 24, 12); ctx.restore(); } }
       else ctx.fill();
       ctx.stroke();
     }
     ctx.fillStyle = '#e8202a'; ctx.beginPath(); ctx.arc(0, 0, 4.2, 0, Math.PI * 2); ctx.fill();
     ctx.font = '700 12px "IBM Plex Sans", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
     ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.strokeText(q.n, 0, 9); ctx.fillStyle = '#e8202a'; ctx.fillText(q.n, 0, 9);
-    if (q.activation) { ctx.font = '600 9px "IBM Plex Sans", sans-serif'; ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.strokeText(q.activation, 0, 22); ctx.fillStyle = '#1d4ed8'; ctx.fillText(q.activation, 0, 22); }
+    const act = q.activation || CARTE.typePE(q).moyen.replace('aspiration', '60 m³');
+    if (act) { ctx.font = '600 9px "IBM Plex Sans", sans-serif'; ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; ctx.strokeText(act, 0, 22); ctx.fillStyle = '#1d4ed8'; ctx.fillText(act, 0, 22); }
     if (actif) { ctx.strokeStyle = '#2a6df0'; ctx.lineWidth = 2; ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.arc(0, 0, 16, 0, Math.PI * 2); ctx.stroke(); }
     ctx.restore();
   };

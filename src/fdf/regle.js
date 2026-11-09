@@ -58,7 +58,7 @@
     // 2/ rapporteur
     const R = 70;
     ctx.fillStyle = 'rgba(255,255,255,.82)'; ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
-    for (let d = 0; d < 360; d += 10) { const b = rad(d), k = d % 90 === 0 ? 12 : d % 30 === 0 ? 8 : 4; ctx.beginPath(); ctx.moveTo(cx + Math.sin(b) * R, cy - Math.cos(b) * R); ctx.lineTo(cx + Math.sin(b) * (R - k), cy - Math.cos(b) * (R - k)); ctx.stroke(); }
+    for (let d = 0; d < 360; d += 22.5) { const b = rad(d), k = d % 90 === 0 ? 12 : d % 45 === 0 ? 8 : 4; ctx.beginPath(); ctx.moveTo(cx + Math.sin(b) * R, cy - Math.cos(b) * R); ctx.lineTo(cx + Math.sin(b) * (R - k), cy - Math.cos(b) * (R - k)); ctx.stroke(); }
     ctx.fillStyle = '#111'; ctx.font = '700 12px "IBM Plex Sans"';
     [['N', 0], ['E', 90], ['S', 180], ['O', 270]].forEach(([t, d]) => ctx.fillText(t, cx + Math.sin(rad(d)) * (R - 22), cy - Math.cos(rad(d)) * (R - 22)));
     // fleche « propagation du feu » et « vent du »
@@ -69,8 +69,8 @@
       ctx.font = '700 10px "IBM Plex Sans"'; ctx.lineWidth = 3; ctx.strokeStyle = '#fff'; const tx = cx + Math.sin(b) * (R + 46), ty = cy - Math.cos(b) * (R + 46);
       ctx.strokeText(txt, tx, ty); ctx.fillText(txt, tx, ty);
     };
-    fl(RG.az + 180, '#475569', `VENT DU ${Math.round((RG.az + 180) % 360)}°`, false);
-    fl(RG.az, '#e2202a', `PROPAGATION ${Math.round(RG.az)}°`, true);
+    fl(RG.az + 180, '#475569', `VENT DU ${CARTE.rose(RG.az + 180).toUpperCase()}`, false);
+    fl(RG.az, '#e2202a', `PROPAGATION VERS LE ${CARTE.rose(RG.az).toUpperCase()}`, true);
     // 1/ coordonnees du centre
     ctx.font = '700 12px "IBM Plex Mono"'; ctx.fillStyle = '#5b21b6'; ctx.lineWidth = 3; ctx.strokeStyle = '#fff';
     const lab = RG.coord(RG.x, RG.y); ctx.strokeText(lab, cx, cy + R + 14); ctx.fillText(lab, cx, cy + R + 14);
