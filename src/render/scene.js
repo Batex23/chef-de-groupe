@@ -780,6 +780,8 @@ S3.update = function (dtReal, now) {
     fds.setCut(isCut, cutLevel * LV + 1.15 - R3);
     fds.update(ev, W.t, dtReal * (G.speed || 1));
     const fi = fds.info(); fdsOK = fi.ok;
+    // lecture FDS en coupe : les fumees et flammes decoratives du jeu s'effacent devant la coupe du calcul
+    const lecture = fdsOK && isCut && fds.mode().mode > 0; if (smoke) smoke.visible = !lecture; S3._lecture = lecture;
     const bd = document.getElementById('fds-badge');
     if (bd) { bd.hidden = !fdsOK; if (fdsOK) { const txt = `<b>FDS</b> ${fi.id.slice(0, 2)} · ${fi.label} · t = ${Math.floor(fi.tf / 60)} min`; if (bd._t !== txt) { bd.innerHTML = txt; bd._t = txt; } } }
   }
@@ -825,7 +827,7 @@ S3.update = function (dtReal, now) {
       const qa = fds.sample(xm, R3 + w[4] - 0.1, 0.25), qb = fds.sample(xm, R3 + w[4] + 0.5, 0.35);
       if (qa && qb) { const h = Math.max(qa.HRR, qb.HRR), Tm = Math.max(qa.T, qb.T); flameOn = h > 40 || Tm > 550; k = clamp(h / 1500 + (Tm - 400) / 1200, 0.35, 1); }
     }
-    fl.grp.visible = flameOn;
+    fl.grp.visible = flameOn && !S3._lecture;
     if (flameOn) {
       fl.arr.forEach((s, j) => {
         const x = w[1] + (j + 0.5) * (w[2] - w[1]) / fl.arr.length;
@@ -838,7 +840,7 @@ S3.update = function (dtReal, now) {
   }
   // propagation au R+4 par la facade (fenetre au-dessus du sejour)
   const r4 = G.r4 || {}, r4f = flames.find(f => f.id === 'R4W'), r4On = r4.t0 != null && !r4.out && r4.q > 80;
-  r4f.grp.visible = r4On;
+  r4f.grp.visible = r4On && !S3._lecture;
   if (r4On) {
     const k = clamp(r4.q / 2500, 0.3, 1), y0 = 4 * LV + 2.2;
     r4f.arr.forEach((sp, j) => { const hh = (0.5 + 0.9 * k) * (0.7 + 0.3 * Math.sin(now / 65 + j * 1.7)); sp.position.set(1.0 + (j + 0.5) * 0.35, y0 + hh * 0.3 - 0.25, 0.3); sp.scale.set(0.45 + 0.2 * k, hh, 1); });
@@ -849,7 +851,7 @@ S3.update = function (dtReal, now) {
   // feu interieur (canape / piece) visible en coupe
   const sofa = flames.find(f => f.id === 'SOFA');
   const sejFire = roomOnFire(W, 'SEJ');
-  sofa.grp.visible = sejFire && cutR3 && !!G.K.rooms.SEJ;
+  sofa.grp.visible = sejFire && cutR3 && !!G.K.rooms.SEJ && !S3._lecture;
   if (sofa.grp.visible) sofa.arr.forEach((s, j) => { const hh = 1.2 * (0.7 + 0.3 * Math.sin(now / 60 + j * 2.3)); s.position.set(0.8 + j * 0.45, R3 + 0.5 + hh * 0.4, -1.1 - (j % 2) * 0.3); s.scale.set(0.9, hh, 1); });
   // lumiere du feu
   const Qs = W.Z.SEJ.fireQ + W.Z.CUI.fireQ * 0.6 + W.Z.CH1.fireQ * 0.6;
@@ -1001,6 +1003,17 @@ function updateHoses() {
 
 // ------------------------------------------------------------------ selection
 const ray = new T.Raycaster(), mouse = new T.Vector2(); ray.layers.enableAll();
+// lecture du calcul FDS sous le curseur, en vue en coupe (a la hauteur de lecture choisie)
+S3.fdsProbe = function (cx, cy) {
+  if (!fds || !cut || !fds.info().ok) return null;
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const o = ray.ray.origin, d = ray.ray.direction, py = cutLevel * LV + 1.15, tp = (py - o.y) / d.y;
+  if (!(tp > 0)) return null;
+  const h = fds.mode().h, q = fds.sample(o.x + d.x * tp, cutLevel * LV + h, o.z + d.z * tp);
+  return q ? Object.assign({ h }, q) : null;
+};
 S3.pick = function (cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
   mouse.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);

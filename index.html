@@ -40,6 +40,13 @@
   <button class="btn" data-view="coupe" aria-pressed="false">Vue en coupe</button>
   <span class="cutlv" id="cut-lv" hidden role="group" aria-label="Niveau de la coupe"><b>Coupe</b><button class="btn" data-lv="4">R+4</button><button class="btn" data-lv="3" aria-pressed="true">R+3</button><button class="btn" data-lv="2">R+2</button><button class="btn" data-lv="1">R+1</button><button class="btn" data-lv="0">RDC</button></span>
   <span class="fdsbadge" id="fds-badge" hidden title="Fumées affichées : calcul FDS le plus proche de vos décisions"></span>
+  <div class="fdslect" id="fds-lect" hidden aria-label="Lecture du calcul FDS en coupe">
+    <b>Lecture FDS</b>
+    <span role="group" aria-label="Grandeur"><button class="btn" data-fm="1" aria-pressed="true">Température</button><button class="btn" data-fm="2">Visibilité</button><button class="btn" data-fm="3">CO</button><button class="btn" data-fm="0">Fumée</button></span>
+    <span role="group" aria-label="Hauteur de lecture"><button class="btn" data-fh="0.5">0,5 m</button><button class="btn" data-fh="1">1 m</button><button class="btn" data-fh="1.8" aria-pressed="true">1,8 m</button><button class="btn" data-fh="2.3">sous plafond</button></span>
+    <div class="fdsleg" id="fds-leg"></div>
+  </div>
+  <div class="fdsprobe" id="fds-probe" hidden></div>
 </div>
 
 <section id="suivi" aria-label="Suivi des engagements">

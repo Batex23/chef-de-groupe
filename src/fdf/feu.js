@@ -104,6 +104,8 @@
     this.ext = new Uint8Array(N);                    // 1 : eteint par les secours, 2 : barriere (eau, retardant, bande noyee)
     this.wet = new Float32Array(N);                  // mouillage (s restant) : la maille ne brule pas
     this.t = 0; this.heap = []; this.spots = []; this.rng = mulberry(opts.graine || 1);
+    this.vu = new Uint8Array(N);                     // maille deja traitee par le front (pas de nouvelle saute a la reprise du calcul)
+    this.tMin = 0;                                   // apres un changement de vent : le front repart de cet instant
     this.burnt = 0;
   }
   // teneur en eau d'equilibre des combustibles morts fins (Simard 1968) selon l'humidite de l'air, a 30 °C
@@ -128,7 +130,7 @@
       const wc = (M.w[0] + M.w[1] + 0.5 * M.w[2] + M.w[3] + 0.5 * M.w[4]) * 0.2242;
       return { R: r.R * p.k * this.cal, R0: r0.R * p.k * this.cal, IR: r.IR, tr: r.tr, wc, lb: LB(u), p };
     });
-    if (this.heap && this.heap.length) this.reseed();
+    if (this.heap && this.heap.length) this.reseed(true);
   };
   // vitesse (m/min) dans la direction (dx, dy) normalisee, et intensite de front (kW/m) en tete
   Feu.prototype.rosDir = function (f, dx, dy) {
@@ -175,11 +177,15 @@
     return top;
   };
   // apres un changement de vent ou d'action des secours : on repart du front actuel
-  Feu.prototype.reseed = function () {
+  // meteo = true : les conditions ont change, la propagation repart de maintenant (sinon les mailles brulees
+  // depuis longtemps « rattraperaient » instantanement le temps ecoule dans la nouvelle direction)
+  Feu.prototype.reseed = function (meteo) {
     this.heap = [];
     const N = this.W * this.H, t = this.t;
+    if (meteo) this.tMin = t;
     for (let i = 0; i < N; i++) {
       const a = this.ta[i];
+      if (a <= t) this.vu[i] = 1;
       if (a <= t && !this.ext[i]) this.push(i, a);
       else if (a > t && a !== Infinity) this.ta[i] = Infinity;
     }
@@ -193,13 +199,14 @@
   Feu.prototype.avance = function (t) {
     const W = this.W, H = this.H, res = this.res;
     while (this.heap.length && this.heap[0][0] <= t) {
-      const [ti, i] = this.pop();
-      if (ti > this.ta[i] || this.ext[i]) continue;
+      const [tp, i] = this.pop();
+      if (tp > this.ta[i] || this.ext[i]) continue;
+      const ti = tp < this.tMin ? this.tMin : tp, neuve = !this.vu[i]; this.vu[i] = 1;
       const r = Math.floor(i / W), c = i % W, f0 = this.fuel[i];
       const T0 = this.tab[f0];
       for (const [dc, dr, d, ux, uy] of NB) {
         const cc = c + dc, rr = r + dr; if (cc < 0 || cc >= W || rr < 0 || rr >= H) continue;
-        const j = rr * W + cc; if (this.ext[j] || this.ta[j] <= ti) continue;
+        const j = rr * W + cc; if (this.ext[j] || this.ta[j] <= tp) continue;
         let fj = this.fuel[j], ros;
         if (!this.tab[fj]) {
           // maille non combustible (piste, route, eau) : franchie seulement par un front intense (flammes > largeur)
@@ -222,7 +229,7 @@
       }
       this.burnt++;
       // sautes de feu : feux de cimes sous vent soutenu
-      if (this.vent > 6 && this.crown(f0) && this.rng() < 0.0015 * this.vent / 10) {
+      if (neuve && this.vent > 6 && this.crown(f0) && this.rng() < 0.0015 * this.vent / 10) {
         const dist = 60 + this.rng() * 30 * this.vent, ang = (this.rng() - 0.5) * 0.5;
         const ca = Math.cos(ang), sa = Math.sin(ang), dx = this.wx * ca - this.wy * sa, dy = this.wx * sa + this.wy * ca;
         const [x, y] = this.xy(i), k = this.idx(x + dx * dist, y + dy * dist);
