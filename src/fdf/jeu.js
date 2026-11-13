@@ -110,7 +110,7 @@
   }
 
   // parametres de la partie (identiques chez l'hote et les clients : meme graine, meme carte inventee)
-  function confAccueil() { return { seed: (Date.now() & 0xffff) || 7, niv: $('#c-niv').value, vent: $('#c-vent').value, dir: $('#c-dir').value, hygro: $('#c-hygro').value, risque: $('#c-risque').value, lieu: $('#c-lieu').value }; }
+  function confAccueil() { return { seed: +new URLSearchParams(location.search).get('graine') || (Date.now() & 0xffff) || 7, niv: $('#c-niv').value, vent: $('#c-vent').value, dir: $('#c-dir').value, hygro: $('#c-hygro').value, risque: $('#c-risque').value, lieu: $('#c-lieu').value }; }
   function demarre(conf) {
     const seed = conf.seed, R = rng(seed);
     const nivK = conf.niv, niv = NIVEAUX[nivK];
@@ -281,6 +281,7 @@
       radio(u.ca, 'CODIS 33', `${u.label} en route.`, 'GRP 272');
     }
     if (u.x == null) return;
+    if (u.nav && G.t >= u.nav.tRet) retourNavette(u);
     const arrive = deplace(u, dt);
     if (arrive && u.etat === 'transit') {
       u.etat = 'attente'; u.tAttente = G.t;
@@ -336,14 +337,15 @@
     if (u.type === 'GPF') return;                 // point d'eau mobile : rien a faire sur place
     if (u.type === 'Lot EGL') return actionEGL(u, dt);
     if (u.type === 'Bulldozer') return actionBull(u, dt);
-    if (u.eau <= 0) { gereEau(u); return; }
+    if (u.eau <= 0) { if (u.nav) { if (!u.ditSec || G.t - u.ditSec > 600) { u.ditSec = G.t; radio(u.ca, 'CDG Salles', `${u.label} à sec, action interrompue jusqu'au retour du CCF (${Math.max(1, Math.round((u.nav.tRet - G.t) / 60))} min).`, 'DIR 654', 'alerte'); evalue('rto', 'Continuité de l\'attaque', `${u.label} à sec à ${heure()} en attendant sa navette`, 'mi', 'Rapprocher le point d\'eau (GPF en point d\'eau mobile) ou relever l\'UIFF par une autre : ratio théorique 1/3 à l\'attaque.'); } } else gereEau(u); return; }
     if (m === 'ligne') return actionLigne(u, dt);
     if (m === 'defense') return actionDefense(u, dt);
     if (m === 'attente') return;
     // attaques : rejoindre le front puis eteindre en progressant
     const cib = cibleFront(u); if (!cib) return;
     const d = Math.hypot(cib[0] - u.x, cib[1] - u.y);
-    const vMarche = { front: 10, flancG: 30, flancD: 30, percee: 40, lisiere: 25 }[m] / 60;   // m/s en action
+    // jalonnement : 30 m/min a 2 x 250 L/min, soit 17 L par metre de flanc ; le memento donne 15 L/m (lance 40/10) a 30 L/m (LDV) par citerne
+    const vMarche = { front: 10, flancG: 30, flancD: 30, percee: 40, lisiere: 25 }[m] / 60 * (u.nav ? 0.7 : 1);   // m/s en action
     const vApproche = vitesseHPu(u, u.x, u.y);
     const v = d > 40 ? vApproche : Math.min(vMarche, vApproche * 1.5 + 0.05);
     if (d > 5) { u.x += (cib[0] - u.x) / d * Math.min(d, v * dt); u.y += (cib[1] - u.y) / d * Math.min(d, v * dt); }
@@ -353,11 +355,12 @@
     const I = intensiteLocale(cells);
     // memento : 1 UIFF tient 40 m de front (attaque de front / ligne d'appui) pour une intensite <= 7000 kW/m
     const eff = clamp(7000 / Math.max(I, 1), 0.08, 1);
-    const portee = { front: 20, flancG: 15, flancD: 15, percee: 18, lisiere: 12 }[m] * Math.sqrt(eff) + 5;
+    const unCCF = u.nav ? 0.75 : 1, mou = G.mouillant ? 1.12 : 1;     // navette : un seul CCF a l'attaque ; mouillant : meilleure penetration
+    const portee = ({ front: 20, flancG: 15, flancD: 15, percee: 18, lisiere: 12 }[m] * Math.sqrt(eff) * unCCF * mou) + 5;
     const n = F.traite(u.x, u.y, portee, 'eteint');
-    F.traite(u.x, u.y, portee + 10, 'mouille', 90);
+    F.traite(u.x, u.y, portee + 10, 'mouille', G.mouillant ? 240 : 90);     // le mouillant penetre le combustible : la lisiere traitee tient plus longtemps
     if (n) G.besoinReseed = true;
-    const conso = 2 * DEBIT_LDV / 60 * dt * (m === 'lisiere' ? 0.5 : 1);
+    const conso = (u.nav ? 1 : 2) * DEBIT_LDV / 60 * dt * (m === 'lisiere' ? 0.5 : 1) * (G.mouillant ? 0.85 : 1);
     u.eau = Math.max(0, u.eau - conso);
     u.Ivu = I; u.actif = G.t;
     // securite : attaque de front sur un feu trop intense
@@ -391,20 +394,38 @@
     G.dirtyFond = true; u.actif = G.t; G.besoinReseed = true;
     if (u.av >= L) { u.bande = null; u.mission = 'attente'; radio(u.ca, 'CDG Salles', `Bande terminée (${Math.round(L)} m).`, 'DIR 654'); }
   }
-  function gereEau(u) {
-    // permanence de l'eau : un CCF part au point d'eau pendant que l'autre poursuit (ou l'UIFF entiere si vide)
+  // Permanence de l'eau et continuite de l'attaque (cours « raisonnement operationnel », fiche 1.2.3) :
+  // le CCF vide s'ecarte et va au point d'eau, l'autre poursuit l'action. entier = true : toute l'UIFF y va (ordre du COS).
+  function gereEau(u, entier) {
     const actifs = Object.values(G.pe).filter(p => p.actif && (!p.gpf || p.gpf.eau > 1000));
     if (!actifs.length) {
       if (!u.alerteEau) { u.alerteEau = true; radio(u.ca, 'CDG Salles', `${u.label} : ${u.eau > 0 ? 'un CCF bientôt à sec' : 'à sec'}, aucun point d'eau activé.`, 'DIR 654', 'alerte'); }
       if (u.eau <= 0 && !u.penEau) { u.penEau = true; evalue('rto', 'Permanence de l\'eau', `${u.label} à sec à ${heure()} sans point d'eau activé`, 'ko', 'Activer un point d\'eau dès le message d\'ambiance (MPF jusqu\'à 3 UIFF, MPR ou MPRI au-delà).'); }
       return;
     }
-    if (u.eau > 0 && u.eau >= CCF_L) return;
+    if (!entier && (u.nav || (u.eau > 0 && u.eau >= CCF_L))) return;
     let best = null, bt = 1e18;
-    for (const p of actifs) { const r = CARTE.route(u.x, u.y, p.x, p.y); if (r && r.t < bt) { bt = r.t; best = p; } }
+    for (const p of actifs) { const r = CARTE.route(u.x, u.y, p.x, p.y); if (r && r.t / CINE < bt) { bt = r.t / CINE; best = p; } }
     if (!best) return;
-    u.retour = [u.x, u.y]; u.auPE = best.n; u.etat = 'vers_pe'; allerA(u, best.x, best.y); u.alerteEau = false;
-    radio(u.ca, 'CDG Salles', `${u.label} au point d'eau ${best.n} pour remplissage, ${Math.round(bt / 60)} min de trajet.`, 'DIR 654');
+    u.alerteEau = false;
+    if (entier || u.type !== 'UIFF') {
+      u.retour = [u.x, u.y]; u.auPE = best.n; u.etat = 'vers_pe'; allerA(u, best.x, best.y);
+      radio(u.ca, 'CDG Salles', `${u.label} au point d'eau ${best.n} pour remplissage, ${Math.round(bt / 60)} min de trajet.`, 'DIR 654');
+      return;
+    }
+    // navette d'un CCF : trajet aller, remplissage au debit du point d'eau (file d'attente comprise), retour
+    const plein = CCF_L / (best.debit * 1000 / 3600), file = Object.values(G.unites).filter(v => v.nav && v.nav.pe === best.n).length;
+    u.nav = { pe: best.n, tRet: G.t + 2 * bt + plein * (1 + file) + 120, t0: G.t };
+    best.rotations = (best.rotations || 0) + 1;
+    radio(u.ca, 'CDG Salles', `${u.label} : un CCF part au point d'eau ${best.n}, l'autre poursuit l'action. Retour dans ${Math.round((u.nav.tRet - G.t) / 60)} min.`, 'DIR 654');
+  }
+  function retourNavette(u) {
+    const pe = G.pe[u.nav.pe]; u.nav = null;
+    let q = Math.min(CCF_L, u.cap - u.eau);
+    if (pe && pe.reserve) { q = Math.min(q, pe.volume); pe.volume -= q; if (pe.volume <= 0) { radio(u.ca, 'CDG Salles', `Réserve ${pe.n} vide.`, 'DIR 654', 'alerte'); delete G.pe[pe.n]; } }
+    if (pe && pe.gpf) { q = Math.min(q, pe.gpf.eau); pe.gpf.eau -= q; }
+    u.eau += q;
+    if (!u.ditRetour || G.t - u.ditRetour > 900) { u.ditRetour = G.t; radio(u.ca, 'CDG Salles', `${u.label} : CCF de retour du point d'eau, plein fait, je poursuis.`, 'DIR 654'); }
   }
 
   function actionLigne(u, dt) {
@@ -440,6 +461,14 @@
 
   // =============================================================== evenements, etat du feu
   function evenements() {
+    // mouillant : systematique a l'attaque initiale au-dela de 5 000 m2 (NP/GOP/2005-220)
+    if (!G.evMouillant && G.tEngage1 != null && G.t - G.tEngage1 > 12 * 60 && G.bilan && G.bilan.ha > 0.5 && G.etatFeu === 'en cours') {
+      G.evMouillant = true; evalue('rto', 'Emploi du mouillant', `non ordonné, feu de ${G.bilan.ha.toFixed(1)} ha`, 'mi', 'Systématique à l\'attaque initiale au-delà de 5 000 m² : à ordonner sur la DIR 654 (« emploi du mouillant »).');
+    }
+    // responsable du point d'eau (fiche 1.2.3) : designe par le COS, sergent au minimum
+    if (!G.evAlpha && Object.values(G.pe).some(p => !p.reserve && p.actif && G.t - p.tActif > 10 * 60)) {
+      G.evAlpha = true; evalue('rto', 'Responsable du point d\'eau', G.alpha ? `${G.alpha} désigné` : 'non désigné', G.alpha ? 'ok' : 'mi', 'Le COS désigne un responsable du point d\'eau (sergent au minimum) : sens de circulation, suivi des remplissages, compte rendu.');
+    }
     // feu hors dimension chef de groupe
     if (!G.horsDim && G.bilan && G.bilan.ha > HA_MAX_CDG && G.etatFeu === 'en cours') {
       G.horsDim = true;
@@ -491,6 +520,7 @@
   function radio(de, a, txt, canal, cls, o) {
     // engin tenu par un joueur : ce que le moteur lui fait « dire » devient une situation que lui seul voit
     if (NET.mode === 'hote' && !(o && o.humain)) { const hu = G.unites.find(x => x.uid && x.ca === de); if (hu) { NET.log({ k: 'radio', r: { t: G.t, de: 'Situation', a: hu.label, txt, canal: 'situation', cls: cls || 'info', pour: hu.uid } }); return; } }
+    if (G.muetCDG && de === 'CDG Salles') return;
     if (de === 'CDG Salles') { detecteReflexes(txt, canal); if (window.DETRESSE && G.feu) DETRESSE.message(canal, txt); }
     if (de === 'CDG Salles' && canal === 'GRP 272') G.mesMsgs.push({ t: G.t, txt });
     const r = { t: G.t, de, a, txt, canal, cls: cls || (de === 'CDG Salles' ? 'moi' : '') };
@@ -748,7 +778,7 @@
       evalue('arrivee', 'Reconnaissance en cours', f.get('reco') ? 'annoncée' : 'non annoncée', f.get('reco') ? 'ok' : 'mi');
       evalue('arrivee', 'Délai', `message à ${heure()}`, 'ok');
       radio('CDG Salles', 'CODIS 33', `CDG Salles arrivé à l'adresse indiquée. Commune de ${f.get('commune')}, lieu-dit ${f.get('ld')}. Feu de ${f.get('cat') || '—'}. ${f.get('reco') ? 'Reconnaissance en cours.' : ''}`, 'GRP 272');
-      G.msgs.arrivee = { t: G.t }; G.tArrivee = G.tArrivee || G.t;
+      G.msgs.arrivee = { t: G.t }; G.tArrivee = G.tArrivee || G.t; G.catAnnoncee = f.get('cat');
       setPhase('reco');
   };
   PH.arrivee_bind = () => { 
@@ -818,9 +848,9 @@
       const ha = +f.get('ha'); evalue('messages', 'Ambiance : superficie', `${ha || '—'} ha (réel ${b.ha.toFixed(1)} ha)`, ha && Math.abs(ha - b.ha) <= Math.max(0.5, b.ha * 0.4) ? 'ok' : ha && Math.abs(ha - b.ha) <= b.ha ? 'mi' : 'ko', 'Surface ≈ profondeur × front / 2.');
       const fr = +f.get('front'); evalue('messages', 'Ambiance : longueur du front', `${fr || '—'} m (réel ${b.front} m)`, fr && Math.abs(fr - b.front) <= Math.max(30, b.front * 0.4) ? 'ok' : fr ? 'mi' : 'ko');
       evalue('messages', 'Ambiance : situation', `${f.get('sit') || '—'} (attendu : ${sit.v}${sit.menaces.length ? ' — menacés dans l\'heure : ' + sit.menaces.join(', ') : ''})`, f.get('sit') === sit.v ? 'ok' : 'ko', 'C\'est la situation générale (enjeux, surface menacée) qui compte, pas la difficulté d\'accès.');
-      const nReq = besoinUIFF(prevision(30).bilan ? frontPrevu() : b.front, b.Imax), nDem = +f.get('nuiff');
+      const nReq = besoinUIFF(frontPrevu(), b.Imax), nDem = +f.get('nuiff');
       const ecartD = nDem - nReq, tropD = ecartD > Math.max(2, Math.round(nReq * 0.4));
-      evalue('messages', 'Ambiance : demande de moyens', `${nDem || '—'} UIFF au total (mémento : ≈ ${nReq} pour ${frontPrevu()} m de front à +30 min, intensité ${Math.round(b.Imax)} kW/m)`, nDem && Math.abs(ecartD) <= Math.max(1, Math.round(nReq * 0.25)) ? 'ok' : ecartD > Math.max(2, Math.round(nReq * 0.4)) ? 'ko' : nDem && ecartD >= -2 ? 'mi' : 'ko', tropD ? `Demande excessive (+${ecartD} UIFF) : ces moyens manquent sur les autres feux du département.` : 'Nombre TOTAL, moyens déjà sur place compris. 1 UIFF par 40 m de front à tenir.');
+      evalue('messages', 'Ambiance : demande de moyens', `${nDem || '—'} UIFF au total (mémento : ≈ ${nReq} pour ${frontPrevu()} m de front à tenir à l'arrivée des renforts, intensité ${Math.round(b.Imax)} kW/m)`, nDem && Math.abs(ecartD) <= Math.max(1, Math.round(nReq * 0.25)) ? 'ok' : ecartD > Math.max(2, Math.round(nReq * 0.4)) ? 'ko' : nDem && ecartD >= -2 ? 'mi' : 'ko', tropD ? `Demande excessive (+${ecartD} UIFF) : ces moyens manquent sur les autres feux du département.` : 'Nombre TOTAL, moyens déjà sur place compris. 1 UIFF par 40 m de front à tenir.');
       if (tropD) radio('CODIS 33', 'CDG Salles', `Reçu. Activité forte sur le département, merci de confirmer le besoin de ${nDem} UIFF.`, 'GRP 272', 'codis');
       const peDem = f.get('pe');
       evalue('messages', 'Ambiance : point d\'eau', peDem ? `n° ${peDem} au moyen d'une ${f.get('moyen')}` : 'non demandé', peDem ? (nDem > 3 && f.get('moyen') === 'MPF' ? 'mi' : 'ok') : 'ko', 'Mémento : jusqu\'à 3 UIFF une MPF ; au-delà une MPR ou MPRI.');
@@ -849,13 +879,14 @@
       m.querySelectorAll('input').forEach(i => i.oninput = f); f();
     });
   }
-  function nbUIFF() { return G.unites.filter(u => u.type === 'UIFF').length; }
+  function nbUIFF() { return G.unites.filter(u => u.type === 'UIFF' && !u.libere).length; }
   function demandeAutres(liste) {
     const nb = {};
     for (let m of liste) { if (m === 'ABE') m = 'Canadair'; nb[m] = (nb[m] || 0) + 1; }
     for (const m in nb) G.demandes.push({ type: m, n: nb[m], t: G.t + 3 * 60 });
   }
-  function frontPrevu() { const P = prevision(30), b = P.bilan(); return b.front; }
+  // front a tenir a l'arrivee des renforts (une dizaine de minutes en cinetique d'exercice)
+  function frontPrevu() { const P = prevision(10), b = P.bilan(); return Math.max(b.front, F.bilan().front); }
   FORM.cr = () => `<form class="form" id="f-msg">
     <p class="aide">Message de compte rendu n° ${G.cr + 1} (toutes les 20 à 30 min).</p>
     <label>Changement de phase de lutte <select name="phase">${opt(['', 'Feu fixé', 'Feu maîtrisé'])}</select></label>
@@ -935,8 +966,9 @@
     if (u.etat === 'transit') return 'en route' + (u.path ? '' : '');
     if (u.etat === 'attente') return 'au point d\'engagement';
     if (u.etat === 'vers_pe') return 'vers point d\'eau ' + u.auPE;
+    if (u.nav && u.etat === 'engage') return (LIB[u.mission] || 'engagé') + ' · 1 CCF au point d\'eau';
     if (u.etat === 'remplissage') return 'remplissage';
-    if (u.etat === 'hors service') return 'hors service';
+    if (u.etat === 'hors service') return u.libere ? 'libérée' : 'hors service';
     if (u.detresse) return 'DÉTRESSE';
     return LIB[u.mission] || 'engagé';
   }
@@ -987,7 +1019,7 @@
   function execOrdre(u, k, cible) {
     if (u.x == null || u.etat === 'hors service') return false;
     if (k === 'aller') { allerA(u, cible[0], cible[1], true); u.etat = u.mission ? 'engage' : 'transit'; renderMoyens(); return true; }
-    if (k === 'eau') { u.eau = Math.min(u.eau, Math.min(CCF_L, u.cap) - 1); gereEau(u); renderMoyens(); return true; }
+    if (k === 'eau') { gereEau(u, true); renderMoyens(); return true; }
     if (k === 'alpha') {
       const [x, y] = cible; allerA(u, x, y); u.etat = 'engage'; u.mission = 'alpha';
       const id = 'GPF' + u.id; G.pe[id] = { n: id, x, y, moyen: u.label, debit: 60, actif: false, tActif: G.t + 1e9, gpf: u, mobile: true };
@@ -1045,6 +1077,168 @@
     r.onresult = e => { let tmp = ''; for (let i = e.resultIndex; i < e.results.length; i++) { if (e.results[i].isFinal) fin += e.results[i][0].transcript + ' '; else tmp += e.results[i][0].transcript; } cb((fin + tmp).trim()); };
     r.start();
   }
+  // =============================================================== dialogue avec le CODIS (GRP 272)
+  // Procedure du cours « Les messages feux de foret » : demande de reseau avec la qualite du message,
+  // « Parlez », message dans l'ordre du masque de saisie ; le CODIS relance les rubriques manquantes puis collationne.
+  const NOM_MSG = { arrivee: 'd\'arrivée à l\'adresse indiquée', ambiance: 'd\'ambiance', cr: 'de compte rendu', eteint: 'de feu éteint' };
+  const indicatif = () => (G.msgs.arrivee ? 'COS ' + CARTE.commune(G.ix, G.iy) : 'CDG Salles');
+  const peDejaDemande = () => Object.values(G.pe).some(p => !p.reserve);
+  // [cle, libelle de relance, condition d'exigence]
+  const MASQUES = {
+    arrivee: [['commune', 'la commune'], ['ld', 'le lieu-dit'], ['cat', 'la nature du feu']],
+    ambiance: [['ha', 'la surface brûlée'], ['front', 'la longueur du front de feu'], ['sit', 'la situation'], ['nuiff', 'les moyens : secours suffisants, ou nombre total de moyens de lutte nécessaires'], ['pe', 'le point d\'eau à activer et son moyen de pompage', () => !peDejaDemande()]],
+    cr: [['sit', 'l\'évolution de la situation'], ['ha', 'la superficie détruite']],
+    eteint: [['commune', 'la commune'], ['ld', 'le lieu-dit'], ['coord', 'les coordonnées'], ['ha', 'la superficie détruite'], ['cat', 'la nature de la végétation'], ['cause', 'la cause'], ['orig', 'l\'origine', s => s.cause && s.cause !== 'Inconnue'], ['surv', 'qui assure la surveillance du feu']],
+  };
+  const vide = v => v == null || v === '' || (Array.isArray(v) && !v.length);
+  const enumFr = l0 => { const c = {}; l0.forEach(x => { c[x] = (c[x] || 0) + 1; }); const l = Object.keys(c).map(k => (c[k] > 1 ? c[k] + ' ' + k : k)); return l.length > 1 ? l.slice(0, -1).join(', ') + ' et ' + l[l.length - 1] : l[0] || ''; };
+  function ditCodis(t) { G.dernierCodis = t; radio('CODIS 33', 'CDG Salles', t, 'GRP 272', 'codis'); }
+  // rubriques lues dans un message
+  function rubriques(r, type) {
+    const enCours = G.demandes.filter(d => !d.fait && (!d.type || d.type === 'UIFF')).reduce((a, d) => a + d.n, 0);
+    const nu = r.suffisant ? nbUIFF() + enCours : r.uiff != null ? r.uiff : r.uiffSup != null ? nbUIFF() + enCours + r.uiffSup : null;
+    const pe = r.pe && carte.points_eau.some(p => p.n === r.pe) ? r.pe : null;
+    const s = { commune: r.commune, ld: r.lieuDit, cat: r.categorie, ha: r.ha, front: r.front, sit: r.situation, nuiff: nu, autres: r.moyens, aut: r.autorites, pteng: r.pteng, pe, moyen: r.pompe, diff: r.diff, coord: r.coord, cause: r.cause, orig: r.origine, surv: r.surv, phase: r.phase };
+    if (r.menace != null) s.menace = r.menace + ' ha';
+    if (r.reco) s.reco = 'on';
+    if (r.pe && !pe) s.peInconnu = r.pe;
+    if (type === 'arrivee') { delete s.ha; delete s.front; }
+    return s;
+  }
+  function fusionne(d, s) { for (const k in s) { const v = s[k]; if (vide(v)) continue; if (Array.isArray(v)) d.s[k] = Array.from(new Set([...(d.s[k] || []), ...v])); else d.s[k] = v; } }
+  function resume(d) {
+    const s = d.s, p = [];
+    if (s.commune) p.push('commune de ' + s.commune); if (s.ld) p.push('lieu-dit ' + s.ld); if (s.coord) p.push('coordonnées ' + s.coord);
+    if (s.cat) p.push('feu de ' + s.cat.toLowerCase()); if (s.phase) p.push(s.phase.toLowerCase());
+    if (s.ha != null) p.push(s.ha < 1 ? Math.round(s.ha * 10000) + ' m²' : String(s.ha).replace('.', ',') + ' ha'); if (s.front != null) p.push('front de ' + s.front + ' m');
+    if (s.sit) p.push('situation ' + s.sit.toLowerCase()); if (!vide(s.diff)) p.push(s.diff.join(', ').toLowerCase()); if (s.menace) p.push(s.menace + ' menacés');
+    if (s.nuiff != null) p.push(s.nuiff <= nbUIFF() ? 'secours suffisants' : s.nuiff + ' moyens de lutte au total');
+    if (!vide(s.autres)) p.push(s.autres.join(', ')); if (!vide(s.aut)) p.push(s.aut.join(', ').toLowerCase());
+    if (s.pe) p.push(`point d'eau ${s.pe}${s.moyen ? ' par ' + s.moyen : ''}`); if (s.pteng) p.push('point d\'engagement ' + s.pteng);
+    if (s.cause) p.push('cause ' + s.cause.toLowerCase()); if (s.orig) p.push(s.orig.toLowerCase()); if (s.surv) p.push('surveillance ' + s.surv);
+    return p.join(', ');
+  }
+  function manquants(d) { return MASQUES[d.type].filter(([k, , cond]) => (!cond || cond(d.s)) && vide(d.s[k])).map(x => x[1]); }
+  function suiteDialogue() {
+    const d = G.dia, ind = indicatif(), m = manquants(d);
+    if (d.s.peInconnu && !d.s.pe && !d.ditPE) { d.ditPE = true; ditCodis(`${ind}, le point d'eau ${d.s.peInconnu} n'existe pas sur le secteur. Vérifiez le numéro sur votre cartoguide.`); return; }
+    if (m.length && d.relances < 2) {
+      d.relances++; const dejà = resume(d);
+      ditCodis(`${ind}, ${dejà ? 'bien reçu : ' + dejà + '. ' : ''}Il me manque ${enumFr(m)}.`);
+      return;
+    }
+    finaliseDialogue(m.length > 0);
+  }
+  function finaliseDialogue(incomplet) {
+    const d = G.dia, s = d.s; G.dia = null;
+    const avant = nbUIFF() + G.demandes.filter(x => !x.fait && (!x.type || x.type === 'UIFF')).reduce((a, x) => a + x.n, 0);
+    if (d.type === 'ambiance' && !s.cat) s.cat = G.catAnnoncee || '';
+    if (d.type === 'ambiance' && s.pe && !s.moyen) s.moyen = 'MPF';
+    if (d.type === 'cr' && s.nuiff == null) s.nuiff = avant;
+    if (d.type === 'cr') s.txt = d.dits.join(' ');
+    G.muetCDG = true;
+    try { ENVOI[d.type](pseudoForm(s)); } finally { G.muetCDG = false; }
+    G.mesMsgs.push({ t: G.t, txt: `Message ${NOM_MSG[d.type]} : ${resume(d)}` });
+    if (d.type === 'eteint') return;
+    const ind = indicatif(), p = [];
+    if (d.type === 'arrivee') p.push(`arrivée à l'adresse indiquée à ${heure()}`, resume(d) + (s.reco ? ', reconnaissance en cours' : ''));
+    else p.push(d.type === 'cr' ? `compte rendu n° ${G.cr} à ${heure()}` : `message d'ambiance à ${heure()}`, resume(d));
+    let rep = `Reçu ${ind}, ${p.filter(Boolean).join(' : ')}.`;
+    if (incomplet) rep += ' Message pris en l\'état, incomplet.';
+    if (d.type !== 'arrivee') {
+      const total = s.nuiff || avant, sup = total - avant;
+      if (sup > 0) rep += ` J'engage ${sup} UIFF supplémentaire${sup > 1 ? 's' : ''}, soit ${total} moyens de lutte au total.` + (total >= 6 && !G.cdcAnnonce ? ' À partir de 6 moyens de lutte, un chef de colonne est engagé : préparez votre point de situation.' : '');
+      if (total >= 6) G.cdcAnnonce = true;
+      if (!vide(s.autres)) rep += ` ${enumFr(s.autres)} : demande transmise.`;
+      if (!vide(s.aut)) rep += ` ${enumFr(s.aut)} : avisés.`;
+    } else rep += ' J\'attends votre message d\'ambiance sous 5 minutes.';
+    ditCodis(rep);
+  }
+  function versCodis(txt) {
+    const r = PARLE.analyse(txt, ctxParole());
+    radio('CDG Salles', 'CODIS 33', txt, 'GRP 272');
+    const ind = indicatif();
+    if (G.dia && G.t - G.dia.t > 6 * 60) G.dia = null;        // dialogue abandonne
+    // ---- questions
+    if (r.question === 'repetez') return ditCodis(G.dernierCodis || `${ind}, je n'ai rien à répéter.`);
+    if (r.question === 'heure') return ditCodis(`${ind}, top horaire : ${heure()}.`);
+    if (r.question === 'meteo') return ditCodis(`${ind}, bulletin du jour : vent du ${CARTE.rose(G.dir)}, ${G.vent} m/s, hygrométrie ${G.hygro} %, risque ${G.risque.nom.toLowerCase()}. Pas d'évolution annoncée dans l'heure.`);
+    if (r.question === 'renforts') return ditCodis(`${ind}, ${pointRenforts()}`);
+    if (r.question === 'aerien') return ditCodis(`${ind}, ${AVIONS.avions.length ? AVIONS.avions.map(a => `${a.id} : ${a.etat}`).join(' ; ') + '.' : 'des Canadair sont en alerte à Mérignac : comptez une vingtaine de minutes après votre demande. Dash sur demande motivée.'}`);
+    if (r.question === 'eau') { const l = Object.values(G.pe).filter(p => !p.reserve); return ditCodis(`${ind}, ${l.length ? l.map(p => `point d'eau ${p.n} par ${p.moyen} : ${p.actif ? 'opérationnel' : 'opérationnel vers ' + hm(G.heure0 + p.tActif)}`).join(' ; ') + '.' : 'aucun point d\'eau activé pour l\'instant. Indiquez-moi le numéro et le moyen de pompage.'}`); }
+    // ---- annulation, liberation de moyens
+    if (r.annule) {
+      const types = r.moyens.length ? r.moyens : (/uiff|unite|renfort|moyens de lutte/.test(r.t) ? ['UIFF'] : []);
+      const cibles = G.demandes.filter(d => !d.fait && types.includes(d.type || 'UIFF'));
+      if (!cibles.length) return ditCodis(`${ind}, rien à annuler : ${types.length ? 'ces moyens sont déjà partis ou n\'ont pas été demandés' : 'précisez les moyens concernés'}.`);
+      cibles.forEach(d => { d.fait = true; d.annule = true; });
+      return ditCodis(`Reçu ${ind}, j'annule ${enumFr(cibles.map(d => `${d.n} ${d.type || 'UIFF'}`))}.`);
+    }
+    if (r.libere && r.type === 'libre' && !G.dia) { libereUnite(r.libere); return; }
+    // ---- messages types
+    let d = G.dia;
+    const typ = r.type in MASQUES ? r.type : null;
+    if (typ && (!d || d.type !== typ || r.reseau)) {
+      let type = typ, note = '';
+      if (type === 'arrivee') {
+        if (!G.cdgArrive) return ditCodis(`${ind}, vous n'êtes pas encore signalé sur les lieux. Rappelez à votre arrivée au point à atteindre.`);
+        if (G.msgs.arrivee) return ditCodis(`${ind}, j'ai déjà votre message d'arrivée de ${hm(G.heure0 + G.msgs.arrivee.t)}. J'attends votre message d'ambiance.`);
+      }
+      if ((type === 'ambiance' || type === 'cr') && !G.msgs.arrivee) return ditCodis(`${ind}, je n'ai pas votre message d'arrivée à l'adresse indiquée. Passez-le d'abord.`);
+      if (type === 'ambiance' && G.msgs.ambiance) { type = 'cr'; note = `J'ai déjà votre message d'ambiance : je saisis un compte rendu n° ${G.cr + 1}. `; }
+      if (type === 'cr' && !G.msgs.ambiance) { type = 'ambiance'; note = 'Je n\'ai pas encore votre message d\'ambiance : je le saisis comme tel. '; }
+      G.procRadio = G.procRadio || {};
+      if (!G.procRadio[type]) { G.procRadio[type] = true; evalue('messages', `Procédure radio : message ${NOM_MSG[type]}`, r.reseau ? 'demande de réseau avec la qualité du message' : r.annonce ? 'qualité annoncée, sans attendre « Parlez »' : 'qualité du message non annoncée', r.reseau ? 'ok' : 'mi', 'Annoncer la qualité du message à la demande de réseau (« CODIS 33 de COS … pour message d\'ambiance »), attendre « Parlez », puis respecter l\'ordre du masque.'); }
+      d = G.dia = { type, s: {}, dits: [], relances: 0, t: G.t };
+      if (r.reseau) return ditCodis(`${note}Parlez ${ind}.`);
+      if (note) d.note = note;
+    }
+    if (d) {
+      d.dits.push(txt); d.t = G.t;
+      const s = rubriques(r, d.type), avant = JSON.stringify(d.s); fusionne(d, s);
+      if (r.libere) d.libere = r.libere;
+      if (JSON.stringify(d.s) === avant && d.relances) { d.relances++; if (d.relances <= 2) return ditCodis(`${ind}, je n'ai pas compris. Il me manque toujours ${enumFr(manquants(d))}.`); }
+      suiteDialogue();
+      if (!G.dia && d.libere) libereUnite(d.libere);
+      return;
+    }
+    // ---- message libre : demandes contenues dans le texte
+    const pe = r.pe && carte.points_eau.some(p => p.n === r.pe) ? r.pe : '';
+    const faits = [];
+    if (r.moyens.length) { demandeAutres(r.moyens); faits.push(enumFr(r.moyens) + ' : demande transmise'); }
+    if (pe) activePE(pe, r.pompe || 'MPF');
+    const veut = /necessite|demande|besoin|envoy|engage/.test(r.t);
+    if (veut && (r.uiff || r.uiffSup)) {
+      const enCours = G.demandes.filter(x => !x.fait && (!x.type || x.type === 'UIFF')).reduce((a, x) => a + x.n, 0);
+      const manq = r.uiffSup != null ? r.uiffSup : r.uiff - nbUIFF() - enCours;
+      if (manq > 0) { G.demandes.push({ n: manq, t: G.t + 4 * 60 }); reflexe('moyens'); faits.push(`j'engage ${manq} UIFF supplémentaire${manq > 1 ? 's' : ''}, soit ${nbUIFF() + enCours + manq} moyens de lutte au total`); }
+      else faits.push(`vous disposez déjà de ${nbUIFF() + enCours} moyens de lutte engagés ou en route`);
+    }
+    if (r.autorites.length) faits.push(enumFr(r.autorites).toLowerCase() + ' : avisés');
+    if (faits.length) return ditCodis(`Reçu ${ind}, ${faits.join(' ; ')}.`);
+    if (r.pe && !pe) return ditCodis(`${ind}, le point d'eau ${r.pe} n'existe pas sur le secteur. Vérifiez le numéro sur votre cartoguide.`);
+    if (!pe) ditCodis(r.t.split(' ').length <= 3 ? `${ind} de CODIS, je vous écoute.` : `Reçu ${ind}. Si c'est un message type, annoncez sa qualité : arrivée, ambiance, compte rendu ou feu éteint.`);
+  }
+  // point sur les renforts : engins en route, demandes en cours, moyens aeriens
+  function pointRenforts() {
+    const p = [];
+    for (const u of G.unites) {
+      if (u.etat === 'alerte') p.push(`${u.label} : départ du CIS à ${hm(G.heure0 + u.tDispo)}`);
+      else if (u.etat === 'transit' && u.path) { let L = 0; for (let i = Math.max(1, u.pi); i < u.path.length; i++) L += Math.hypot(u.path[i].x - u.path[i - 1].x, u.path[i].y - u.path[i - 1].y); p.push(`${u.label} : en route, sur les lieux dans ${Math.max(1, Math.round(L / (u.vit || 12) / 60))} min`); }
+    }
+    for (const d of G.demandes) if (!d.fait) p.push(`${d.n} ${d.type || 'UIFF'} : départ en cours, prise d'alerte à ${hm(G.heure0 + d.t)}`);
+    for (const a of AVIONS.avions) if (a.etat !== 'parti') p.push(`${a.id} : ${a.etat}`);
+    return p.length ? p.join(' ; ') + '.' : 'tous vos moyens sont sur les lieux, aucun renfort en cours.';
+  }
+  // « je libere l'UIFF 3 » : materiel libere (rubrique du compte rendu)
+  function libereUnite(n) {
+    const u = G.unites.filter(x => x.type === 'UIFF')[n - 1], ind = indicatif();
+    if (!u || u.x == null || u.etat === 'hors service') return ditCodis(`${ind}, je n'ai pas d'UIFF ${n} sur votre chantier.`);
+    evalue('rto', 'Matériel libéré', `${u.label} libérée à ${heure()}, feu ${G.etatFeu}`, G.etatFeu === 'en cours' ? 'ko' : 'ok', G.etatFeu === 'en cours' ? 'Ne pas libérer de moyens tant que le feu n\'est pas fixé.' : 'Libérer les moyens dès que la situation le permet : ils manquent ailleurs.');
+    u.etat = 'hors service'; u.mission = null; u.path = null; u.libere = true;
+    ditCodis(`Reçu ${ind}, ${u.label} libérée à ${heure()}, je la remets disponible.`); renderMoyens();
+  }
+
   function ctxParole() { return { communes: carte.communes.map(c => c.n), lieux: carte.lieux.map(l => l.n), categories: CATS }; }
   // champ de formulaire simule a partir du message analyse
   function pseudoForm(o) { return { get: k => (o[k] == null ? '' : Array.isArray(o[k]) ? o[k][0] : o[k]), getAll: k => (o[k] == null ? [] : Array.isArray(o[k]) ? o[k] : [o[k]]) }; }
@@ -1055,25 +1249,28 @@
     $('#parole').hidden = true;
     if (NET.mode === 'client') { if (NET.role === 'ca' && !maUnite()) { info('Choisissez d\'abord votre engin.'); return; } NET.cmd({ type: 'radio', canal, txt, de: $('#parole-de').value }); return; }
     const r = PARLE.analyse(txt, ctxParole());
-    const dest = canal === 'GRP 272' ? 'CODIS 33' : (r.unite ? `CA UIFF ${r.unite}` : 'Chefs d\'agrès');
-    if (canal === 'DIR 654') { radio('CDG Salles', dest, txt, canal); return ordreParole(r); }
-    // GRP 272 : message au CODIS, au format attendu si on le reconnait
-    const pe = r.pe && carte.points_eau.some(p => p.n === r.pe) ? r.pe : '';
-    if (r.type === 'arrivee' && G.phase <= 3 && G.cdgArrive) { G.radioDejaFait = true; ENVOI.arrivee(pseudoForm({ commune: r.commune, ld: r.lieuDit, cat: r.categorie, reco: /reconnaissance/i.test(txt) ? 'on' : '' })); return remplaceDernier(txt); }
-    if (r.type === 'ambiance' && !G.msgs.ambiance) { ENVOI.ambiance(pseudoForm({ cat: r.categorie, ha: r.ha, front: r.front, sit: r.situation, nuiff: r.uiff, autres: r.moyens, aut: r.autorites, pteng: r.coord || '', pe, moyen: r.pompe || 'MPF', menace: '', diff: [], sur: '' })); return remplaceDernier(txt); }
-    if (r.type === 'cr' && G.msgs.ambiance) { ENVOI.cr(pseudoForm({ phase: r.phase, sit: r.situation, ha: r.ha, front: r.front, txt: '', nuiff: r.uiff || nbUIFF(), autres: r.moyens })); return remplaceDernier(txt); }
-    if (r.type === 'eteint') { ENVOI.eteint(pseudoForm({ commune: r.commune, ld: r.lieuDit, coord: r.coord, ha: r.ha, cat: r.categorie, cause: '', orig: '', surv: '' })); return remplaceDernier(txt); }
-    radio('CDG Salles', dest, txt, canal);
-    // demandes contenues dans un message libre
-    if (r.moyens.length) demandeAutres(r.moyens);
-    if (pe) activePE(pe, r.pompe || 'MPF');
-    if (r.uiff && /necessite|demande|besoin/.test(txt.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''))) { const manq = r.uiff - nbUIFF(); if (manq > 0) G.demandes.push({ n: manq, t: G.t + 4 * 60 }); }
-    if (r.moyens.length || pe || r.uiff) radio('CODIS 33', 'CDG Salles', 'Reçu, je traite votre demande.', 'GRP 272', 'codis');
+    if (canal === 'DIR 654') { radio('CDG Salles', r.unite ? `CA UIFF ${r.unite}` : 'Chefs d\'agrès', txt, canal); return ordreParole(r); }
+    versCodis(txt);
   }
   // le message structure genere par ENVOI est remplace par ce qui a ete dit
   function remplaceDernier(txt) { for (let i = G.radio.length - 1; i >= 0; i--) if (G.radio[i].de === 'CDG Salles' && G.radio[i].canal === 'GRP 272') { G.radio[i].txt = txt + '  [transcrit]'; break; } G.mesMsgs[G.mesMsgs.length - 1] = { t: G.t, txt }; renderRadio(); }
   function ordreParole(r) {
     const u = r.unite ? G.unites.filter(x => x.type === 'UIFF')[r.unite - 1] : null;
+    const bots = G.unites.filter(x => x.x != null && !x.uid && x.etat !== 'hors service' && x.etat !== 'alerte' && x.type === 'UIFF');
+    // emploi du mouillant (NP/GOP/2005-220 : systematique au-dela de 5 000 m2 a l'attaque initiale)
+    if (r.mouillant != null) {
+      G.mouillant = r.mouillant ? G.t : null;
+      if (r.mouillant && !G.evMouillant) { G.evMouillant = true; const ha = G.bilan ? G.bilan.ha : 0; evalue('rto', 'Emploi du mouillant', `ordonné à ${heure()}, feu de ${ha.toFixed(1)} ha`, 'ok', 'Systématique à l\'attaque initiale au-delà de 5 000 m² ; toute action commencée au mouillant se poursuit au mouillant.'); }
+      bots.slice(0, 3).forEach(v => radio(v.ca, 'CDG Salles', r.mouillant ? `${v.label}, reçu, eau dopée à 2 pour mille.` : `${v.label}, reçu, arrêt du mouillant.`, 'DIR 654'));
+      if (!r.ordre) return;
+    }
+    if (r.alpha) { const v = u || bots[bots.length - 1]; if (v) { G.alpha = v.ca; radio(v.ca, 'CDG Salles', `${v.label}, reçu, je prends la responsabilité du point d'eau : sens de circulation et suivi des remplissages.`, 'DIR 654'); } return; }
+    // largage imminent : mise en securite a faire confirmer par chaque chef d'agres
+    if (r.securiteLargage && !r.ordre) {
+      G.secuLargage = G.t; reflexe('securite');
+      bots.forEach(v => radio(v.ca, 'CDG Salles', `${v.label}, personnel en sécurité dans les cabines, véhicules écartés.`, 'DIR 654'));
+      return;
+    }
     if (r.ordre === 'repli') { for (const v of (u ? [u] : G.unites.filter(x => x.x != null))) { if (v.uid) { v.ordreRecu = { k: 'attente', t: G.t, txt: 'Repli' }; continue; } v.mission = 'attente'; v.etat = 'engage'; if (G.ptEngagement) allerA(v, ...G.ptEngagement); radio(v.ca, 'CDG Salles', 'Reçu, repli.', 'DIR 654'); } return; }
     if (!u) { if (r.ordre && !G.unites.some(x => x.uid)) radio('Chefs d\'agrès', 'CDG Salles', 'Pour quelle unité ?', 'DIR 654'); return; }
     if (u.x == null) { radio('CODIS 33', 'CDG Salles', `${u.label} n'est pas encore sur les lieux.`, 'GRP 272', 'codis'); return; }
@@ -1370,11 +1567,23 @@ Départ type associé : CDG + ${G.risque.uiff} UIFF</div>
       <table><tr><th>Percée de flanc</th><th>100 m</th><th>200 m</th><th>300 m</th></tr><tr><td>UIFF</td><td>1</td><td>2</td><td>3</td></tr></table>
       <table><tr><th>Jalonnement</th><th></th></tr><tr><td>U3 LDV FDF (6/8 bars)</td><td>100 m</td></tr><tr><td>U3 lance 40/10 (6 bars)</td><td>200 m</td></tr><tr><td>U12 LDV FDF</td><td>200 m</td></tr><tr><td>U12 lance 40/10</td><td>400 m</td></tr></table>
       <table><tr><th>Largage</th><th>120 m</th><th>150 m</th></tr><tr><td>Canadairs</td><td>1</td><td>2</td></tr><tr><td>Dash 8</td><td></td><td>1</td></tr></table>
-      <p>Alimentation : jusqu'à 3 UIFF → MPF ; au-delà → 1 MPR ou MPRI. Traitement des lisières : 1 UIFF / 200 m. Données valables jusqu'à 7 000 kW/m, eau sans additif.</p>
+      <table><tr><th>Barrière chimique</th><th>120 m</th><th>150 m</th><th>250 m</th></tr><tr><td>Canadairs</td><td>2</td><td>3</td><td></td></tr><tr><td>Dash 8</td><td></td><td>1</td><td>2</td></tr><tr><td>CCFS</td><td></td><td></td><td>1</td></tr></table>
+      <table><tr><th>Protection de point sensible (fiche 1.2.2)</th><th>1 habitat</th><th>1 hectare</th></tr><tr><td>UIFF</td><td>1 CCF</td><td>2</td></tr><tr><td>FPT</td><td>1</td><td>4</td></tr></table>
+      <p>Alimentation : jusqu'à 3 UIFF → MPF (30 m³/h) ; au-delà → 1 MPR ou MPRI (55 m³/h) ; MPRGP 120 m³/h pour 10 moyens. Traitement des lisières : 1 UIFF / 200 m. Données valables jusqu'à 7 000 kW/m, eau sans additif.</p>
+      <h3>Permanence de l'eau (fiche 1.2.3)</h3>
+      <p>Ratio théorique 1/3 : 1 UIFF à l'attaque, 1 en transit, 1 au point d'eau. Le véhicule vide s'écarte et va au point d'eau, le suivant prend le relais. Le COS désigne un responsable du point d'eau (sergent au minimum ; adjudant et « Point Alpha » à partir de 5 moyens de lutte).</p>
+      <h3>Mouillant (fiche 1.2.1)</h3>
+      <p>Eau dopée à 2 ‰ : 5 fois l'efficacité de l'eau seule. Emploi systématique à l'attaque initiale au-delà de 5 000 m². Toute action commencée au mouillant se poursuit au mouillant. 60 L par CCF, soit 4 heures.</p>
+      <h3>Choix de l'idée de manœuvre</h3>
+      <p><b>Offensif</b> (attaque de front, jalonnement, percée de flanc) : contact possible, virulence compatible, terrain porteur, moyens suffisants. <b>Défensif</b> (ligne d'appui, défense de point sensible) : attaque directe impossible, enjeu à protéger, feu trop virulent, zone d'appui favorable. Toujours : cheminement de repli identifié, moyens engagés au fil de leur arrivée.</p>
       <h3>Vitesse de propagation (fiche 1.2.2)</h3>
       <table><tr><th>Vent</th><th>Propagation</th><th>Attaque de front</th><th>Ligne d'appui</th></tr>
       <tr><td>≤ 7 m/s</td><td>≤ 700 m/h</td><td>Oui</td><td>Oui</td></tr><tr><td>7 à 14 m/s</td><td>700 à 1 400 m/h</td><td>Oui</td><td>Oui</td></tr><tr><td>14 à 21 m/s</td><td>1 400 à 2 100 m/h</td><td>Initiative COS</td><td>Oui (échelonnée)</td></tr><tr><td>> 21 m/s</td><td>> 2 100 m/h</td><td>Non</td><td>Non</td></tr></table>
       <p>Règle rapide : vent en m/s × 100 = vitesse en m/h. Surface ≈ profondeur × front / 2, front ≈ 1/3 de la profondeur.</p>
+      <h3>Messages au CODIS</h3>
+      <p>Annoncer la qualité du message à la demande de réseau : « CODIS 33 de COS Salles pour message d'ambiance », attendre « Parlez COS Salles », puis respecter l'ordre du masque. Arrivée : T0. Ambiance : T+3 à 5 min. Compte rendu : toutes les 20 à 30 min. Nombre de moyens : toujours le TOTAL, moyens sur place compris. Chef de groupe à partir de 4 moyens de lutte, chef de colonne à partir de 6.</p>
+      <h3>Prise en compte des avions</h3>
+      <p>1 Bonjour · 2 Délégation du chantier à un adjoint · 3 Position du COS · 4 Guidage · 5 Obstacles · 6 Situation · 7 Objectif et mission · 8 « Personnel en sécurité, autorisation de largage » (après confirmation de chaque chef d'agrès sur la DIR 654) · 9 Silence radio · 10 Efficacité du largage, rotation, autonomie. Interruption : « Ne larguez pas, ne larguez pas, ne larguez pas ». Canadair : 6 t d'eau, attaque directe. Dash 8 : 10 t de retardant, pose de ligne.</p>
       <h3>Transmissions</h3>
       <p>GRP 272 : CODIS (messages). DIR 654 : CDG ↔ chefs d'agrès (dès 4 moyens, niveau 1). DIR du groupement : chefs d'agrès ↔ engins. Canal 18 (sud) ou 23 (nord) : air-sol avec les ABE. Charlie 33 : hélicoptère de commandement.</p>
       <h3>Règle des 3 P</h3><p>Permanence de l'eau, de l'observation, des liaisons radio. Cheminement de repli systématique.</p></div>`;

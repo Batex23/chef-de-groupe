@@ -17,8 +17,8 @@
   let A;
   const AV = { avions: [], largages: [], chat: [], points: {}, pecFaite: false };
   const TYPES = {
-    Canadair: { ind: 'Pélican', delai: [35, 50], rotation: 12, autonomie: 150, long: 100, larg: 25, retardant: false, cap: '6 tonnes d\'eau' },
-    'Dash 8': { ind: 'Milan', delai: [20, 30], rotation: 45, autonomie: 240, long: 150, larg: 30, retardant: true, cap: '10 tonnes de retardant' },
+    Canadair: { ind: 'Pélican', delai: [12, 18], rotation: 12, autonomie: 150, long: 120, larg: 25, retardant: false, cap: '6 tonnes d\'eau' },
+    'Dash 8': { ind: 'Milan', delai: [15, 22], rotation: 45, autonomie: 240, long: 150, larg: 30, retardant: true, cap: '10 tonnes de retardant' },
   };
   const DIRS = ['nord', 'nord-est', 'est', 'sud-est', 'sud', 'sud-ouest', 'ouest', 'nord-ouest'];
   AV.init = function (api) { A = api; };
@@ -136,13 +136,21 @@
       const ok = [dirVraie, DIRS[(i0 + 1) % 8], DIRS[(i0 + 7) % 8]].includes(dirM) && Math.abs(dist - dv) < Math.max(250, dv * 0.4);
       return { dit: `${dirM} du feu, ${Math.round(dist)} m`, vrai: `${dirVraie}, ${Math.round(dv)} m de l'origine`, ok };
     }
+    // position sur le sinistre (fiche FDF2) : arriere, avant, flanc gauche, flanc droit
+    if (/suis|position|trouve|sommes|place/.test(t)) {
+      const F = A.F(), ax = (G.cdg.x - G.ix) * F.wx + (G.cdg.y - G.iy) * F.wy, lat = (G.cdg.x - G.ix) * F.wy - (G.cdg.y - G.iy) * F.wx;
+      const b = F.bilan(), prof = b.actifs.length ? Math.max(...b.actifs.map(i => { const [x, y] = F.xy(i); return (x - G.ix) * F.wx + (y - G.iy) * F.wy; })) : 0;
+      const vraiS = ax > prof * 0.8 ? 'à l\'avant du feu' : ax < prof * 0.2 && Math.abs(lat) < Math.max(80, Math.abs(ax)) ? 'à l\'arrière du feu' : lat > 0 ? 'flanc droit' : 'flanc gauche';
+      const ditS = /arriere|origine|queue|depart du feu/.test(t) ? 'à l\'arrière du feu' : /flanc gauche/.test(t) ? 'flanc gauche' : /flanc droit/.test(t) ? 'flanc droit' : /a l avant|en tete|devant le feu|a la tete/.test(t) ? 'à l\'avant du feu' : null;
+      if (ditS) return { dit: ditS + (distM ? `, ${distM[1]} ${distM[2]}` : ''), vrai: `${vraiS}, à ${Math.round(dv)} m de l'origine`, ok: ditS === vraiS, secteur: true };
+    }
     const car = t.match(/\b([a-z]{2}) ?(\d{3})\b/);
     if (car && /suis|position|trouve|sommes/.test(t)) { const c = (car[1] + ' ' + car[2]).toUpperCase(), vr = A.dfci(G.cdg.x, G.cdg.y); return { dit: `carré ${c}`, vrai: `carré ${vr}`, ok: c === vr }; }
     for (const l of A.carte.lieux) { const n = norm(l.n); if (n.length > 4 && t.includes(n) && /suis|position|trouve|sommes/.test(t)) { const d = Math.hypot(l.p[0] - G.cdg.x, l.p[1] - G.cdg.y); return { dit: `lieu-dit ${l.n}`, vrai: `à ${Math.round(d)} m de ${l.n}`, ok: d < 700 }; } }
     return null;
   }
   function cos(txt) {
-    const G = A.G, t = norm(txt), P = AV.points, rep = [], niv = G.nivK;
+    const G = A.G, t = (window.NLU ? NLU.prepare(txt) : norm(txt)).replace(/\bavant gauche\b/g, 'tete gauche').replace(/\bavant droit\b/g, 'tete droit'), P = AV.points, rep = [], niv = G.nivK;
     AV.chat.push({ de: 'COS ' + A.commune(), txt, t: G.t }); A.radio('COS ' + A.commune(), 'Air-sol', txt, 'Canal 18');
     const a = avionVise(t);
     const nouveau = k => { if (P[k] == null) P[k] = G.t; };
@@ -167,7 +175,7 @@
       compris = true;
     }
     if (/vent|hectare|\bha\b|propag|uiff|engins|moyens|feu de|situation/.test(t) && !/tete|flanc|origine/.test(t)) { nouveau('p6'); rep.push('situation prise en compte'); compris = true; }
-    if (/tete|flanc|origine|milieu|queue|\bavg\b|\bavd\b/.test(t)) {
+    if (/tete|flanc|origine|milieu|queue|\bavg\b|\bavd\b/.test(t) && (!(pos && pos.secteur) || /objectif|mission|largu|largage|traite[rz]?|attaqu|barriere|retardant/.test(t))) {
       let obj = objectifDepuisTexte(t.replace(/\bavg\b/, 'tete gauche').replace(/\bavd\b/, 'tete droit'), a);
       if (AV.ligneCarte) { obj = Object.assign(obj || { obj: 'zone désignée' }, { p: AV.ligneCarte[0], q: AV.ligneCarte[1] }); AV.ligneCarte = null; }
       if (obj) {
@@ -181,6 +189,7 @@
     if (/silence radio/.test(t)) { nouveau('p9'); rep.push('silence radio pris en compte'); compris = true; }
     if (/rotation|autonomie|retour|combien de temps/.test(t)) { nouveau('p10'); if (a) rep.push(`rotation ${TYPES[a.type].rotation} minutes, autonomie ${String(Math.round(TYPES[a.type].autonomie / 6) / 10).replace('.', ',')} heures`); compris = true; }
     if (/evolution|effet|resultat/.test(t) && AV.dernierEffet) { rep.push(AV.dernierEffet); compris = true; }
+    if (/efficace|au but|bon largage|trop court|trop long|a cote|hors objectif/.test(t) && AV.dernierEffet) { nouveau('p10'); rep.push(/trop|a cote|hors/.test(t) ? 'bien pris, je corrige sur la prochaine rotation' : 'efficacité confirmée, bien pris'); compris = true; }
     const autorise = /personnel en securite/.test(t) && /autoris/.test(t);
     if (/autoris/.test(t) && !autorise) { rep.push('confirmez « personnel en sécurité, autorisation de largage »'); compris = true; }
     if (autorise) {
@@ -188,7 +197,9 @@
       if (!AV.objectif) rep.push('je n\'ai pas d\'objectif, précisez');
       else {
         const o = AV.objectif, dans = G.unites.filter(u => u.x != null && distSeg([u.x, u.y], o.p, o.q) < 80);
-        if (dans.length) AV.touches = dans;
+        // mise en securite confirmee par les chefs d'agres sur la DIR 654 dans les 5 dernieres minutes : les engins sont en cabine ou degages
+        AV.secuConfirmee = G.secuLargage != null && G.t - G.secuLargage < 5 * 60;
+        if (dans.length && !AV.secuConfirmee) AV.touches = dans;
         const libres = AV.avions.filter(x => x.etat === 'zone' && !x.ordre), cand = libres.length ? libres : AV.avions.filter(x => x.etat === 'approche');
         cand.forEach((x, i) => { x.ordre = { p: o.p, q: o.q, obj: o.obj, milieu: [(o.p[0] + o.q[0]) / 2, (o.p[1] + o.q[1]) / 2], t: Math.max(G.t + 90 + i * 40, x.tArrivee || 0) }; });
         rep.push(libres.length ? 'autorisation de largage prise en compte, je largue dans 2 minutes' : 'autorisation prise en compte, je largue dès mon arrivée sur zone');
@@ -222,7 +233,7 @@
     const ordre = ['p1', 'p3', 'p5', 'p7', 'p8'].filter(k => P[k] != null).map(k => P[k]);
     if (ordre.some((v, i) => i && v < ordre[i - 1])) ev('rto', 'ABE : ordre des 10 points', 'ordre non respecté', 'mi', 'Accueil, délégation, position, guidage, obstacles, situation, objectif, sécurité, silence, rotation.');
     if (AV.touches && AV.touches.length) ev('rto', 'ABE 8. Personnel en sécurité', `autorisation donnée avec ${AV.touches.map(u => u.label).join(', ')} dans la zone de largage`, 'ko', 'Faire dégager la zone avant d\'autoriser.');
-    else ev('rto', 'ABE 8. Personnel en sécurité, autorisation de largage', 'donnée, zone dégagée', 'ok');
+    else ev('rto', 'ABE 8. Personnel en sécurité, autorisation de largage', AV.secuConfirmee ? 'mise en sécurité confirmée par les chefs d\'agrès, puis autorisation' : 'autorisation donnée sans faire confirmer la mise en sécurité aux chefs d\'agrès (zone dégagée par chance)', AV.secuConfirmee ? 'ok' : 'mi', 'Avant d\'autoriser : écarter les véhicules, personnel en cabine, se le faire confirmer par chaque chef d\'agrès sur la DIR 654.');
   }
   function largue(a) {
     const T = TYPES[a.type], { p, q } = a.ordre, F = A.F();
