@@ -40,11 +40,35 @@ async function gunzip(buf) {
 const VS = `out vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`;
 const FS = `
 precision highp float; precision highp sampler3D;
-uniform sampler3D a0, a1, b0, b1; uniform float mt, mc, dens, R3, steps, amax;
+uniform sampler3D a0, a1, b0, b1; uniform float mt, mc, dens, R3, steps, amax, mode, zs, planeY;
 uniform vec3 nmin, nmax, cmin, cmax, nres; in vec3 vW; out vec4 oc;
 vec4 S(sampler3D t, vec3 c){ return texture(t, c); }
+// palette arc-en-ciel de Smokeview, en 12 plages avec lignes d'iso-valeur
+vec3 pal(float v){
+  v = clamp(v, 0.0, 1.0);
+  float b = (floor(v * 12.0) + 0.5) / 12.0;
+  vec3 c = clamp(vec3(1.5 - abs(4.0 * b - 3.0), 1.5 - abs(4.0 * b - 2.0), 1.5 - abs(4.0 * b - 1.0)), 0.0, 1.0);
+  float e = abs(fract(v * 12.0) - 0.5) * 2.0;
+  return c * (1.0 - 0.35 * smoothstep(0.86, 1.0, e));
+}
 void main(){
   vec3 ro = cameraPosition, rd = normalize(vW - ro);
+  if (mode > 0.5) {
+    // coupe horizontale du calcul FDS : la grandeur est lue a la hauteur zs et dessinee sur le plan de coupe
+    float tp = (planeY - ro.y) / rd.y; if (tp <= 0.0) discard;
+    vec3 p = ro + rd * tp;
+    if (p.x < cmin.x || p.x > cmax.x || p.z < cmin.z || p.z > cmax.z) discard;
+    vec3 f = vec3(p.x, -p.z, zs);
+    vec3 u = clamp((f - nmin) / (nmax - nmin), 0.0, 1.0);
+    vec3 c = (0.5 + u * (nres - 1.0)) / nres;
+    vec4 q = mix(mix(S(a0, c), S(a1, c), mt), mix(S(b0, c), S(b1, c), mt), mc);
+    float v;
+    if (mode < 1.5) v = (20.0 + 1180.0 * q.g * q.g - 20.0) / 600.0;        // temperature : 20 a 620 degC
+    else if (mode < 2.5) v = 1.0 - min(q.r * 30.0, 10.0) / 10.0;            // visibilite : 10 m (bleu) a 0 m (rouge)
+    else v = 20000.0 * q.a * q.a / 3000.0;                                  // CO : 0 a 3000 ppm
+    oc = vec4(pal(v), mix(0.10, 0.86, smoothstep(0.01, 0.10, v)));
+    return;
+  }
   vec3 i0 = (cmin - ro) / rd, i1 = (cmax - ro) / rd;
   vec3 tn = min(i0, i1), tx = max(i0, i1);
   float t0 = max(max(tn.x, tn.y), max(tn.z, 0.0)), t1 = min(min(tx.x, tx.y), tx.z);
@@ -76,7 +100,7 @@ void main(){
 export function createFdsSmoke(T, scene, opts) {
   const R3 = opts.R3, steps = opts.light ? 36 : 64;
   const data = {};                 // id -> {meta, meshes:[{tex:[...], n, nmin, nmax}]}
-  const st = { on: false, id: null, tf: 0, prev: null, fadeT: 0, cut: false, cutY: 1.15, err: null };
+  const st = { on: false, id: null, tf: 0, prev: null, fadeT: 0, cut: false, cutY: 1.15, err: null, mode: 1, h: 1.8 };
   const boxes = [];                // un objet par nom de maillage
   const geo = new T.BoxGeometry(1, 1, 1);
 
@@ -85,7 +109,7 @@ export function createFdsSmoke(T, scene, opts) {
     if (b) return b;
     const u = {
       a0: { value: null }, a1: { value: null }, b0: { value: null }, b1: { value: null }, mt: { value: 0 }, mc: { value: 0 },
-      dens: { value: 1 }, amax: { value: 1 }, R3: { value: R3 }, steps: { value: steps }, nmin: { value: new T.Vector3() }, nmax: { value: new T.Vector3() },
+      dens: { value: 1 }, amax: { value: 1 }, mode: { value: 0 }, zs: { value: 0 }, planeY: { value: 0 }, R3: { value: R3 }, steps: { value: steps }, nmin: { value: new T.Vector3() }, nmax: { value: new T.Vector3() },
       cmin: { value: new T.Vector3() }, cmax: { value: new T.Vector3() }, nres: { value: new T.Vector3() },
     };
     const mat = new T.ShaderMaterial({ glslVersion: T.GLSL3, uniforms: u, vertexShader: VS, fragmentShader: FS, transparent: true, depthWrite: false, side: T.FrontSide });
@@ -158,6 +182,9 @@ export function createFdsSmoke(T, scene, opts) {
     },
     info: () => ({ on: st.on, id: st.id, label: st.id ? CASES[st.id].label : '', tf: st.tf, ok: !!(st.id && ready(st.id)), err: st.err }),
     setCut(on, y) { st.cut = on; st.cutY = y; },
+    // lecture en coupe : 0 fumee, 1 temperature, 2 visibilite, 3 CO ; h = hauteur de lecture au-dessus du plancher (m)
+    setMode(m, h) { if (m != null) st.mode = m; if (h != null) st.h = h; },
+    mode: () => ({ mode: st.mode, h: st.h }),
     // ev : instants de jeu des decisions du joueur ; t : temps depuis l'ignition
     update(ev, t, dt) {
       if (!st.on) { for (const b of boxes) b.m.visible = false; return; }
@@ -182,13 +209,15 @@ export function createFdsSmoke(T, scene, opts) {
         // boite de rendu en repere scene, coupee a la hauteur de la vue en coupe
         let [x0, y0, z0] = M.nmin, [x1, y1, z1] = M.nmax;
         const inside = M.name === 'APPART';
+        const slice = st.cut && st.mode > 0, zs = st.cutY - 1.15 + st.h, zTop = z1;
+        u.mode.value = slice ? st.mode : 0; u.zs.value = Math.min(zs, zTop - 0.05); u.planeY.value = R3 + st.cutY;
         if (st.cut) z1 = Math.min(z1, st.cutY);
         const e = M.name === 'EXTERIEUR' ? 0 : 0.03;   // retrait pour ne pas se confondre avec les murs
         x0 += e; x1 -= e; y0 += e; y1 -= e;
         u.cmin.value.set(x0, R3 + z0, -y1); u.cmax.value.set(x1, R3 + z1, -y0);
         b.m.position.set((x0 + x1) / 2, R3 + (z0 + z1) / 2, -(y0 + y1) / 2);
         b.m.scale.set(x1 - x0, Math.max(0.01, z1 - z0), y1 - y0);
-        b.m.visible = z1 > z0 && (inside ? st.cut : true);
+        b.m.visible = slice ? (st.cutY > z0 && st.cutY <= zTop + 0.01 && zs >= z0) : (z1 > z0 && (inside ? st.cut : true));
       }
     },
   };

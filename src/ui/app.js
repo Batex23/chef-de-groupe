@@ -534,6 +534,32 @@ function bind() {
     const p = S3.pick(e.clientX, e.clientY);
     cv.style.cursor = p ? 'pointer' : 'grab';
   });
+  // lecture FDS : sonde sous le curseur, grandeur et hauteur de la coupe
+  const LEG = { 1: ['Température', ['20', '170', '320', '470', '620 °C']], 2: ['Visibilité', ['10 m', '7,5', '5', '2,5', '0 m']], 3: ['Monoxyde de carbone', ['0', '750', '1 500', '2 250', '3 000 ppm']] };
+  const majLect = () => {
+    const el = $('#fds-lect'); if (!el || !S3.fds) return;
+    const on = S3.isCut() && S3.fds.info().ok; el.hidden = !on; if (!on) { $('#fds-probe').hidden = true; return; }
+    const m = S3.fds.mode();
+    el.querySelectorAll('[data-fm]').forEach(b => b.setAttribute('aria-pressed', +b.dataset.fm === m.mode));
+    el.querySelectorAll('[data-fh]').forEach(b => b.setAttribute('aria-pressed', +b.dataset.fh === m.h));
+    const L = LEG[m.mode];
+    $('#fds-leg').innerHTML = L ? `<small>${L[0]} à ${String(m.h).replace('.', ',')} m du sol (calcul FDS)</small><i></i><span>${L[1].map(t => `<em>${t}</em>`).join('')}</span>` : '<small>Fumée du calcul FDS, allégée pour voir l\'intérieur</small>';
+  };
+  setInterval(majLect, 500);
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-fm],[data-fh]'); if (!b || !S3.fds) return;
+    if (b.dataset.fm != null) S3.fds.setMode(+b.dataset.fm, null); else S3.fds.setMode(null, +b.dataset.fh);
+    majLect();
+  });
+  cv.addEventListener('pointermove', e => {
+    const pr = $('#fds-probe'); if (!pr || !S3.fdsProbe) return;
+    const q = down ? null : S3.fdsProbe(e.clientX, e.clientY);
+    if (!q) { pr.hidden = true; return; }
+    const n = (v, d) => v.toLocaleString('fr-FR', { maximumFractionDigits: d });
+    pr.hidden = false; pr.style.left = (e.clientX + 16) + 'px'; pr.style.top = (e.clientY + 14) + 'px';
+    pr.innerHTML = `<b>${n(q.T, 0)} °C</b> · visibilité ${n(Math.min(q.VIS, 30), 1)} m<br>CO ${n(q.CO, 0)} ppm · O₂ ${n(q.O2, 1)} %<small>FDS, à ${String(q.h).replace('.', ',')} m du sol</small>`;
+  });
+  cv.addEventListener('pointerleave', () => { const pr = $('#fds-probe'); if (pr) pr.hidden = true; });
   $('#ctx').addEventListener('click', e => {
     if (e.target.closest('[data-close]')) return closeMenu();
     const go = e.target.closest('[data-go]'); if (go) { openTab(go.dataset.go === 'msg' ? 'p-msg' : go.dataset.go === 'sitac' ? 'p-sitac' : 'p-radio'); closeMenu(); return; }

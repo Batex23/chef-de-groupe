@@ -307,3 +307,17 @@ tr.urgent td { color: #ff8a90; font-weight: 600; }
 .cutlv[hidden] { display: none; }
 .cutlv .btn { padding: 7px 12px; min-width: 0; }
 .cutlv .btn[aria-pressed="true"] { background: #9a72ff; color: #fff; border-color: #9a72ff; }
+
+/* lecture du calcul FDS en coupe */
+.fdslect { position: fixed; left: 16px; bottom: 64px; z-index: 30; display: grid; gap: 6px; background: rgba(11,19,34,.9); border: 1px solid #2d3b4c; border-radius: 6px; padding: 8px 10px; max-width: 430px; }
+.fdslect[hidden], .fdsprobe[hidden] { display: none; }
+.fdslect > b { font: 700 11px/1 ui-monospace, monospace; color: #f08c2a; letter-spacing: .06em; text-transform: uppercase; }
+.fdslect span[role=group] { display: flex; flex-wrap: wrap; gap: 4px; }
+.fdslect .btn { padding: 5px 9px; font-size: 13px; }
+.fdsleg small { display: block; color: #c3cfdb; font-size: 12px; margin-bottom: 4px; }
+.fdsleg i { display: block; height: 12px; border-radius: 2px; background: linear-gradient(90deg, #00007f, #0000ff 12%, #007fff 25%, #00ffff 37%, #7fff7f 50%, #ffff00 62%, #ff7f00 75%, #ff0000 88%, #7f0000); }
+.fdsleg span { display: flex; justify-content: space-between; font: 600 11px/1.6 ui-monospace, monospace; color: #c3cfdb; }
+.fdsleg em { font-style: normal; }
+.fdsprobe { position: fixed; z-index: 60; pointer-events: none; background: rgba(11,19,34,.94); border: 1px solid #f08c2a; border-radius: 5px; padding: 6px 9px; font: 500 13px/1.45 system-ui, sans-serif; color: #e8eef5; }
+.fdsprobe b { font-size: 15px; color: #fff; }
+.fdsprobe small { display: block; color: #8d9db0; font-size: 11px; }
